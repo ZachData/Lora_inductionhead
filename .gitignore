@@ -1,0 +1,38 @@
+# Claude Code session data — contains full plaintext transcripts, never commit
+.claude/
+
+# Credentials / keys — should live in SSM Parameter Store, not the repo
+*.pem
+*.key
+deploy_key
+deploy_key.pub
+.env
+.env.*
+*_rsa
+*_ed25519
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+.ipynb_checkpoints/
+
+# PyTorch / model artifacts — large binaries, don't belong in git history
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# OS / editor noise
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# Logs
+*.log
+bootstrap.logX
