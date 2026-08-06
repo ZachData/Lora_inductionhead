@@ -1,0 +1,76 @@
+name: ci
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  tier0-lint-and-hash:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: mypy src/indbw
+      # Metric-hash check: not yet designed. CLAUDE.md specifies the
+      # intent (hash probes.py + algebra.py; fail if it changes without
+      # a METRIC_VERSION bump) but not the storage/comparison mechanism.
+      # This is a real gap, not an oversight — design it test-first in
+      # a work session rather than inventing the mechanism here.
+      - run: echo "metric-hash check: not yet implemented, see CLAUDE.md tier 0"
+
+  tier1-unit:
+    runs-on: ubuntu-latest
+    needs: tier0-lint-and-hash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[dev]"
+      - run: pytest tests/unit -q
+
+  tier2-property-and-smoke:
+    runs-on: ubuntu-latest
+    needs: tier1-unit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[dev]"
+      - run: pytest tests/property -q
+
+  tier2_5-schema-and-verdicts:
+    runs-on: ubuntu-latest
+    needs: tier2-property-and-smoke
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[dev]"
+      # Runs over every results record in the repo, not just new ones —
+      # a metric-version bump or criterion edit surfaces as a failure on
+      # all affected historical records. No-op until results/ exists.
+      - run: |
+          if [ -d results ]; then
+            pytest tests/schema -q
+          else
+            echo "no results/ directory yet — nothing to validate"
+          fi
+
+  tier3-integration:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[dev]"
+      - run: pytest tests/integration -q

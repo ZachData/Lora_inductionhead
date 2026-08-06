@@ -1,0 +1,16 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.0
+    hooks:
+      - id: ruff
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.0
+    hooks:
+      - id: mypy
+        additional_dependencies: []
+
+  # Metric-hash check belongs here too (CLAUDE.md, "Hygiene" — "so a
+  # wasted CI cycle costs seconds instead of minutes"). Add once the
+  # hash mechanism itself is designed; see the note in ci.yml tier 0.
