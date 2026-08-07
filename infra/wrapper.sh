@@ -121,7 +121,12 @@ fi
 #         see infra notes.
 echo "No transcript backup configured (no S3 bucket yet) — .claude/ will be lost on terminate."
 
-# --- 6. Terminate the orchestrator. Whether there's more work is a
+# --- 6. Delete this instance's own idle alarm before it's gone —
+#         otherwise it lingers in INSUFFICIENT_DATA forever, referencing
+#         a dead instance ID.
+aws cloudwatch delete-alarms --region "${REGION}" --alarm-names "research-vm-idle-${INSTANCE_ID}" || true
+
+# --- 7. Terminate the orchestrator. Whether there's more work is a
 #         decision for the next manual launch, not this script. ---
 echo "CI green. Terminating ${INSTANCE_ID}."
 aws ec2 terminate-instances --region "${REGION}" --instance-ids "${INSTANCE_ID}"

@@ -21,6 +21,16 @@ env/
 *.egg-info/
 .ipynb_checkpoints/
 
+# Test / dev tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+
+# Build artifacts
+build/
+dist/
+
 # PyTorch / model artifacts — large binaries, don't belong in git history
 *.pt
 *.pth
@@ -35,4 +45,3 @@ env/
 
 # Logs
 *.log
-bootstrap.logX
