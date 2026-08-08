@@ -10,7 +10,7 @@ This is the living specification and the source of truth. It is updated at the e
 
 | Phase | Item | Status | Notes |
 |---|---|---|---|
-| Setup | `pyproject.toml`, package skeleton, CI green on empty suite | ◐ | |
+| Setup | `pyproject.toml`, package skeleton, CI green on empty suite | ● | CI run 31238848784 green on commit 1af4d12: tier0/1/2/2.5 all pass, tier3 correctly skipped (workflow_dispatch only) |
 | Setup | `algebra.py` + unit tests against closed-form oracles | ○ | §3 identities are exact; test to machine precision |
 | Setup | `probes.py` + silent-failure guards | ○ | Every probe ships with a negative control test |
 | Setup | `models.py` Pythia loader + local checkpoint cache | ○ | |
