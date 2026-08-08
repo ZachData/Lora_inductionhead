@@ -9,7 +9,7 @@
 set -euo pipefail
 
 REGION="us-east-2"
-REPO_DIR="$HOME/Lora_inductionhead"
+REPO_DIR="/home/ubuntu/Lora_inductionhead"
 WORKER_TEMPLATE="research-vm-worker-template"
 WORKER_BOOTSTRAP_TEMPLATE="$REPO_DIR/infra/worker-bootstrap.sh"
 
