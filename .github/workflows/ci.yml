@@ -21,7 +21,8 @@ jobs:
       # a METRIC_VERSION bump) but not the storage/comparison mechanism.
       # This is a real gap, not an oversight — design it test-first in
       # a work session rather than inventing the mechanism here.
-      - run: echo "metric-hash check: not yet implemented, see CLAUDE.md tier 0"
+      - run: |
+          echo "metric-hash check: not yet implemented, see CLAUDE.md tier 0"
 
   tier1-unit:
     runs-on: ubuntu-latest

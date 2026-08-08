@@ -10,7 +10,7 @@ This is the living specification and the source of truth. It is updated at the e
 
 | Phase | Item | Status | Notes |
 |---|---|---|---|
-| Setup | `pyproject.toml`, package skeleton, CI green on empty suite | ○ | |
+| Setup | `pyproject.toml`, package skeleton, CI green on empty suite | ◐ | |
 | Setup | `algebra.py` + unit tests against closed-form oracles | ○ | §3 identities are exact; test to machine precision |
 | Setup | `probes.py` + silent-failure guards | ○ | Every probe ships with a negative control test |
 | Setup | `models.py` Pythia loader + local checkpoint cache | ○ | |
@@ -240,6 +240,7 @@ Append-only. Never edit an entry — supersede it.
 | 2026-08 | Adapt one matrix per bilinear form | Cross terms destroy the rank and parity structure (§3) |
 | 2026-08 | H4 (subspace identity) reduced to a single deferred instance | Full sweep is the largest time sink; one instance answers the first question anyone asks |
 | 2026-08 | M5 truncation probe added | Best available necessity evidence; removes optimizer from the inference (§7) |
+| 2026-08-08 | Fixed invalid YAML in `.github/workflows/ci.yml` (unquoted `run: echo "...: ..."` parsed as an illegal nested mapping) | Every push since the workflow was added had produced 0 jobs and an immediate failure — CI was never actually green despite the Setup-row-1 code existing since 57f2dc2. Caught while closing the "CI green on empty suite" row; wrapped the offending step in a block scalar (`run: \|`) |
 
 ---
 
