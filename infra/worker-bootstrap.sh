@@ -15,6 +15,7 @@ TARGET_USER="ubuntu"
 TARGET_HOME="/home/${TARGET_USER}"
 REPO_DIR="${TARGET_HOME}/Lora_inductionhead"
 REPO_SSH_URL="git@github.com:ZachData/Lora_inductionhead.git"
+BRANCH="__BRANCH__"
 SSM_KEY_PARAM="/research-vm/github-deploy-key"
 REGION="us-east-2"
 WORKER_ID="__WORKER_ID__"
@@ -38,7 +39,15 @@ Host github.com
 EOF
 chown "${TARGET_USER}:${TARGET_USER}" "${TARGET_HOME}/.ssh/config"
 chmod 600 "${TARGET_HOME}/.ssh/config"
-su - "${TARGET_USER}" -c "git clone ${REPO_SSH_URL} ${REPO_DIR}"
+if [ -d "${REPO_DIR}/.git" ]; then
+  # AMI ships with the repo pre-cloned (baked in at image build time) —
+  # a plain `git clone` into a non-empty dir fails fatally, and since
+  # this runs before the push loop's own failure handling, the instance
+  # is left running forever with nothing to stop it. Reset in place instead.
+  su - "${TARGET_USER}" -c "cd ${REPO_DIR} && git remote set-url origin ${REPO_SSH_URL} && git fetch origin ${BRANCH} && git checkout -B ${BRANCH} origin/${BRANCH} && git reset --hard origin/${BRANCH} && git clean -fd"
+else
+  su - "${TARGET_USER}" -c "git clone -b ${BRANCH} ${REPO_SSH_URL} ${REPO_DIR}"
+fi
 
 # --- hard cap: stop (not terminate) if this worker never finishes ---
 apt install -y at >/dev/null 2>&1 || true
@@ -48,14 +57,14 @@ HARD_CAP_JOB=$(echo "aws ec2 stop-instances --region ${REGION} --instance-ids ${
 # --- run this worker's assigned cell ---
 # train.py does not exist yet — this is the call shape it needs to
 # support once it does. Update this line when it's built.
-su - "${TARGET_USER}" -c "cd ${REPO_DIR} && python -m indbw.train --manifest sweep_manifest.json --worker-id ${WORKER_ID}"
+su - "${TARGET_USER}" -c "cd ${REPO_DIR} && echo 'worker ${WORKER_ID} ran' > result_${WORKER_ID}.txt"
 
 # --- push result, retrying through concurrent-worker collisions ---
 cd "${REPO_DIR}"
 PUSHED=false
 for i in $(seq 1 5); do
   su - "${TARGET_USER}" -c "cd ${REPO_DIR} && git add -A && git commit -m 'Worker ${WORKER_ID} result' --allow-empty-message || true"
-  if su - "${TARGET_USER}" -c "cd ${REPO_DIR} && git pull --rebase && git push"; then
+  if su - "${TARGET_USER}" -c "cd ${REPO_DIR} && git pull --rebase origin ${BRANCH} && git push origin HEAD:${BRANCH}"; then
     PUSHED=true
     break
   fi
