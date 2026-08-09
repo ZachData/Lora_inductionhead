@@ -1,8 +1,0 @@
-{
-  "sweep_id": "TEST-concurrency-dry-run",
-  "workers": [
-    {"worker_id": 0, "arm": "QK", "rank": 1, "lr": 0.0003, "seed": 0},
-    {"worker_id": 1, "arm": "QK", "rank": 1, "lr": 0.0003, "seed": 1},
-    {"worker_id": 2, "arm": "QK", "rank": 1, "lr": 0.0003, "seed": 2}
-  ]
-}
