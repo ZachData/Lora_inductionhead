@@ -44,7 +44,7 @@ if [ -d "${REPO_DIR}/.git" ]; then
   # a plain `git clone` into a non-empty dir fails fatally, and since
   # this runs before the push loop's own failure handling, the instance
   # is left running forever with nothing to stop it. Reset in place instead.
-  su - "${TARGET_USER}" -c "cd ${REPO_DIR} && git fetch origin ${BRANCH} && git checkout -B ${BRANCH} origin/${BRANCH} && git reset --hard origin/${BRANCH} && git clean -fd"
+  su - "${TARGET_USER}" -c "cd ${REPO_DIR} && git remote set-url origin ${REPO_SSH_URL} && git fetch origin ${BRANCH} && git checkout -B ${BRANCH} origin/${BRANCH} && git reset --hard origin/${BRANCH} && git clean -fd"
 else
   su - "${TARGET_USER}" -c "git clone -b ${BRANCH} ${REPO_SSH_URL} ${REPO_DIR}"
 fi
