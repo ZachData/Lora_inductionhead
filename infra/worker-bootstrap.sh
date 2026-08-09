@@ -15,6 +15,7 @@ TARGET_USER="ubuntu"
 TARGET_HOME="/home/${TARGET_USER}"
 REPO_DIR="${TARGET_HOME}/Lora_inductionhead"
 REPO_SSH_URL="git@github.com:ZachData/Lora_inductionhead.git"
+BRANCH="__BRANCH__"
 SSM_KEY_PARAM="/research-vm/github-deploy-key"
 REGION="us-east-2"
 WORKER_ID="__WORKER_ID__"
@@ -38,7 +39,7 @@ Host github.com
 EOF
 chown "${TARGET_USER}:${TARGET_USER}" "${TARGET_HOME}/.ssh/config"
 chmod 600 "${TARGET_HOME}/.ssh/config"
-su - "${TARGET_USER}" -c "git clone ${REPO_SSH_URL} ${REPO_DIR}"
+su - "${TARGET_USER}" -c "git clone -b ${BRANCH} ${REPO_SSH_URL} ${REPO_DIR}"
 
 # --- hard cap: stop (not terminate) if this worker never finishes ---
 apt install -y at >/dev/null 2>&1 || true
@@ -55,7 +56,7 @@ cd "${REPO_DIR}"
 PUSHED=false
 for i in $(seq 1 5); do
   su - "${TARGET_USER}" -c "cd ${REPO_DIR} && git add -A && git commit -m 'Worker ${WORKER_ID} result' --allow-empty-message || true"
-  if su - "${TARGET_USER}" -c "cd ${REPO_DIR} && git pull --rebase && git push"; then
+  if su - "${TARGET_USER}" -c "cd ${REPO_DIR} && git pull --rebase origin ${BRANCH} && git push origin HEAD:${BRANCH}"; then
     PUSHED=true
     break
   fi
