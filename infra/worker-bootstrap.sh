@@ -57,7 +57,7 @@ HARD_CAP_JOB=$(echo "aws ec2 stop-instances --region ${REGION} --instance-ids ${
 # --- run this worker's assigned cell ---
 # train.py does not exist yet — this is the call shape it needs to
 # support once it does. Update this line when it's built.
-su - "${TARGET_USER}" -c "cd ${REPO_DIR} && python -m indbw.train --manifest sweep_manifest.json --worker-id ${WORKER_ID}"
+su - "${TARGET_USER}" -c "cd ${REPO_DIR} && source /home/ubuntu/venv/bin/activate && python -m indbw.train --manifest sweep_manifest.json --worker-id ${WORKER_ID}"
 
 # --- push result, retrying through concurrent-worker collisions ---
 cd "${REPO_DIR}"
