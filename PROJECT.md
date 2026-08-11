@@ -12,7 +12,7 @@ This is the living specification and the source of truth. It is updated at the e
 |---|---|---|---|
 | Setup | `pyproject.toml`, package skeleton, CI green on empty suite | ● | CI run 31238848784 green on commit 1af4d12: tier0/1/2/2.5 all pass, tier3 correctly skipped (workflow_dispatch only) |
 | Setup | `algebra.py` + unit tests against closed-form oracles | ● | §3 identities are exact; test to machine precision. 23 tests (unit oracles + property invariants), all pass at rtol=1e-12 where exact |
-| Setup | `probes.py` + silent-failure guards | ○ | Every probe ships with a negative control test |
+| Setup | `probes.py` + silent-failure guards | ● | PMS, prev-token score, copying score, ICL score, recovery R implemented as pure functions over tensors (no model loading — see §10). 29 tests (unit oracles/discrimination + property invariants), all pass |
 | Setup | `models.py` Pythia loader + local checkpoint cache | ○ | |
 | Setup | `lora.py` three parameterizations + rank/parity tests | ○ | |
 | G0 | Induction transition located at 70m, bracket width measured | ○ | **Gate. Fails → §8** |
@@ -241,6 +241,8 @@ Append-only. Never edit an entry — supersede it.
 | 2026-08 | H4 (subspace identity) reduced to a single deferred instance | Full sweep is the largest time sink; one instance answers the first question anyone asks |
 | 2026-08 | M5 truncation probe added | Best available necessity evidence; removes optimizer from the inference (§7) |
 | 2026-08-08 | Fixed invalid YAML in `.github/workflows/ci.yml` (unquoted `run: echo "...: ..."` parsed as an illegal nested mapping) | Every push since the workflow was added had produced 0 jobs and an immediate failure — CI was never actually green despite the Setup-row-1 code existing since 57f2dc2. Caught while closing the "CI green on empty suite" row; wrapped the offending step in a block scalar (`run: \|`) |
+| 2026-08-11 | `probes.py` takes tensors (attention patterns, OV/embedding/unembedding matrices, per-token NLL), never a `HookedTransformer` | Keeps probes unit-testable against hand-constructed toy inputs per CLAUDE.md's fixture rule, and decouples this row from `models.py` (still ○). Orchestration — running a model to extract these tensors — belongs to whatever calls the probes, not to probes.py itself |
+| 2026-08-11 | `recovery()` returns the unclamped value; clamping for reporting is a separate `clamp_recovery()` call, not a flag | Matches §5 ("clamped for reporting, unclamped logged") as two composable functions instead of a boolean that silently changes return semantics |
 
 ---
 
@@ -252,6 +254,7 @@ Append-only. Never edit an entry — supersede it.
 - Does the matched-$\beta$ unstructured control fix its random subspace before training or resample it? Fixed is the right analogue to LoRA.
 - Is the antisym parameterization's companion term $-vu^\top$ actually benign? The prediction assumes the $+$ version interferes more. Untested.
 - Cross-seed *pretraining* variance band: needed for any "X misses the mechanism" claim, expensive, currently deferred. Do not make claims requiring it.
+- Identity-matrix oracles are transpose-blind: `copying_score(I, I, I) == 1.0` passes even under a `W_U`/`M_OV` argument-order bug, since `I.T == I`. Closed here with an independent per-token recomputation as a second oracle. `lora.py` and `models.py` will hit the same trap testing composed forms against identity/permutation weights — plan for a non-self-transpose oracle alongside any identity-based one.
 
 ---
 
