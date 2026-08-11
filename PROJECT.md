@@ -13,7 +13,7 @@ This is the living specification and the source of truth. It is updated at the e
 | Setup | `pyproject.toml`, package skeleton, CI green on empty suite | ● | CI run 31238848784 green on commit 1af4d12: tier0/1/2/2.5 all pass, tier3 correctly skipped (workflow_dispatch only) |
 | Setup | `algebra.py` + unit tests against closed-form oracles | ● | §3 identities are exact; test to machine precision. 23 tests (unit oracles + property invariants), all pass at rtol=1e-12 where exact |
 | Setup | `probes.py` + silent-failure guards | ● | PMS, prev-token score, copying score, ICL score, recovery R implemented as pure functions over tensors (no model loading — see §10). 29 tests (unit oracles/discrimination + property invariants), all pass |
-| Setup | `models.py` Pythia loader + local checkpoint cache | ⏳ | |
+| Setup | `models.py` Pythia loader + local checkpoint cache | ● | `load_checkpoint(step)` validated against a real download (pythia-70m, step 0): architecture matches §2 exactly (6 layers, d_model=512, 8 heads, d_head=64), forward pass finite. 4 unit tests (mocked, no network) + 2 integration tests, all pass |
 | Setup | `lora.py` three parameterizations + rank/parity tests | ○ | |
 | G0 | Induction transition located at 70m, bracket width measured | ○ | **Gate. Fails → §8** |
 | G1 | Prerequisite check at A: prev-token head, $W_K$ overlap | ○ | **Gate. Cheapest kill. Run before G2** |
@@ -257,7 +257,7 @@ Append-only. Never edit an entry — supersede it.
 - Is the antisym parameterization's companion term $-vu^\top$ actually benign? The prediction assumes the $+$ version interferes more. Untested.
 - Cross-seed *pretraining* variance band: needed for any "X misses the mechanism" claim, expensive, currently deferred. Do not make claims requiring it.
 - Identity-matrix oracles are transpose-blind: `copying_score(I, I, I) == 1.0` passes even under a `W_U`/`M_OV` argument-order bug, since `I.T == I`. Closed here with an independent per-token recomputation as a second oracle. `lora.py` and `models.py` will hit the same trap testing composed forms against identity/permutation weights — plan for a non-self-transpose oracle alongside any identity-based one.
-- This session's coding sandbox has ~1.8GB RAM with no swap — insufficient to actually load `pythia-70m` end to end (torch+transformers imports alone use ~700MB before the model; the HF→TL weight-conversion step OOM-kills the process). `tests/integration/test_models.py` could not be run to completion locally; verify via CI's `tier3-integration` (workflow_dispatch, hosted-runner RAM) or a real worker instance before trusting it, not by re-attempting locally. Same caveat likely applies to any future integration test that instantiates a real checkpoint.
+- This session's coding sandbox has ~1.8GB RAM with no swap — insufficient to load `pythia-70m` end to end (torch+transformers imports alone use ~700MB before the model; the HF→TL weight-conversion step OOM-killed the process every time with no swap). Worked around with a temporary 3GB swapfile (`fallocate`/`mkswap`/`swapon`, removed after); `tests/integration/test_models.py` then passed (2/2). No `gh workflow run` access from this session's PAT (403, insufficient scope) so `tier3-integration` couldn't be triggered as a fallback — the swapfile workaround was the only path to a definitive local read. Future sessions hitting the same OOM on an integration test should reach for temporary swap rather than assuming the code is broken.
 
 ---
 
