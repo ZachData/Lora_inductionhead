@@ -6,6 +6,8 @@ exact to rtol=1e-12. Write the test before implementing anything here.
 
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
 
 
@@ -43,7 +45,7 @@ def principal_angles(U: np.ndarray, V: np.ndarray) -> np.ndarray:
     Qv, _ = np.linalg.qr(V)
     sigma = np.linalg.svd(Qu.T @ Qv, compute_uv=False)
     sigma = np.clip(sigma, -1.0, 1.0)
-    return np.arccos(sigma)
+    return cast(np.ndarray, np.arccos(sigma))
 
 
 def truncate_svd(M: np.ndarray, r: int) -> np.ndarray:
@@ -53,4 +55,4 @@ def truncate_svd(M: np.ndarray, r: int) -> np.ndarray:
     if r < 1 or r > min(M.shape):
         raise ValueError(f"rank {r} out of bounds for shape {M.shape}")
     U, s, Vt = np.linalg.svd(M, full_matrices=False)
-    return (U[:, :r] * s[:r]) @ Vt[:r, :]
+    return cast(np.ndarray, (U[:, :r] * s[:r]) @ Vt[:r, :])
