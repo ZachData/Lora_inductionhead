@@ -28,7 +28,7 @@ def _require_square_attention(attn: np.ndarray) -> int:
             "attention pattern rows must sum to 1 (a valid post-softmax pattern); "
             "got an input that does not (e.g. an all-zero matrix)"
         )
-    return attn.shape[0]
+    return int(attn.shape[0])
 
 
 def prefix_matching_score(attn: np.ndarray, T: int) -> float:
