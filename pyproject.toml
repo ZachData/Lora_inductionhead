@@ -9,6 +9,12 @@ requires-python = ">=3.11"
 dependencies = [
     "torch",
     "transformer_lens",
+    # transformer_lens's neox weight conversion hardcodes GPTNeoXForCausalLM's
+    # head as `embed_out`; transformers renamed it to `lm_head` after 5.9.0
+    # (transformer_lens's own declared floor), breaking Pythia loading on an
+    # unpinned install. Pinned to the last version confirmed to still have
+    # `embed_out` — see PROJECT.md decisions log.
+    "transformers==5.9.0",
     "numpy",
 ]
 
