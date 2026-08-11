@@ -11,7 +11,7 @@ This is the living specification and the source of truth. It is updated at the e
 | Phase | Item | Status | Notes |
 |---|---|---|---|
 | Setup | `pyproject.toml`, package skeleton, CI green on empty suite | ● | CI run 31238848784 green on commit 1af4d12: tier0/1/2/2.5 all pass, tier3 correctly skipped (workflow_dispatch only) |
-| Setup | `algebra.py` + unit tests against closed-form oracles | ○ | §3 identities are exact; test to machine precision |
+| Setup | `algebra.py` + unit tests against closed-form oracles | ● | §3 identities are exact; test to machine precision. 23 tests (unit oracles + property invariants), all pass at rtol=1e-12 where exact |
 | Setup | `probes.py` + silent-failure guards | ○ | Every probe ships with a negative control test |
 | Setup | `models.py` Pythia loader + local checkpoint cache | ○ | |
 | Setup | `lora.py` three parameterizations + rank/parity tests | ○ | |
@@ -248,6 +248,7 @@ Append-only. Never edit an entry — supersede it.
 
 - Induction objective: synthetic repeated-random, natural-text induction positions, or KL-to-$B$? Synthetic is cleanest but risks a circuit that only works on synthetic input; KL-to-$B$ makes $B$ a training signal and partly undercuts §1.2. **Unresolved and consequential — settle before G3.** Whichever is chosen, evaluate on the other as a held-out check.
 - Head selection rule at $A$ — must be stated and applied before seeing results, not chosen afterward.
+- Local dev venv (`/home/ubuntu/venv`) runs Python 3.12 with numpy 2.5.1, whose stubs use 3.12-only syntax; `mypy` (pinned to `python_version = "3.11"` per pyproject, matching CI's `actions/setup-python`) fails locally on that stub file alone, unrelated to any code in this repo. No 3.11 interpreter is installed locally to confirm CI is unaffected — unverified until the next real CI run. If CI's tier 0 also fails, this needs a real fix (numpy pin or mypy target bump); if it's fine, this is a venv-only artifact.
 - Does the matched-$\beta$ unstructured control fix its random subspace before training or resample it? Fixed is the right analogue to LoRA.
 - Is the antisym parameterization's companion term $-vu^\top$ actually benign? The prediction assumes the $+$ version interferes more. Untested.
 - Cross-seed *pretraining* variance band: needed for any "X misses the mechanism" claim, expensive, currently deferred. Do not make claims requiring it.
