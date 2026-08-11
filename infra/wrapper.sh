@@ -24,6 +24,13 @@ source /home/ubuntu/venv/bin/activate
 
 cd "$REPO_DIR"
 
+# Reconcile the AMI-baked venv against whatever this commit's
+# pyproject.toml actually declares. The venv is a snapshot from
+# image-build time; without this, a dependency fix merged to the repo
+# (e.g. a version pin) silently never reaches instances launched from
+# an older AMI — the exact failure mode that motivated adding this line.
+pip install -e ".[dev]"
+
 # --- 1. Run Claude Code on the next row ---
 claude "Read PROJECT.md. Take the first unfinished (○) row in phase order \
 from the status board. Follow CLAUDE.md's development rules: write the \
