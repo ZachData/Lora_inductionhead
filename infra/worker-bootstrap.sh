@@ -19,7 +19,9 @@ BRANCH="__BRANCH__"
 SSM_KEY_PARAM="/research-vm/github-deploy-key"
 REGION="us-east-2"
 WORKER_ID="__WORKER_ID__"
-HOURS=2   # hard cap per worker cell — shorter than the orchestrator's, tune per sweep
+HOURS=3   # hard cap per worker cell — shorter than the orchestrator's, tune per sweep.
+          # G0 (2026-08-12): ~19-20 checkpoints/worker * 5.5min ~= 1.75-1.83h; 3h leaves
+          # buffer for model-download variance without needing per-sweep tuning.
 
 IMDS_TOKEN=$(curl -sX PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
 INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}" http://169.254.169.254/latest/meta-data/instance-id)
@@ -55,15 +57,17 @@ systemctl enable --now atd
 HARD_CAP_JOB=$(echo "aws ec2 stop-instances --region ${REGION} --instance-ids ${INSTANCE_ID}" | at now + "${HOURS}" hours 2>&1 | grep -o 'job [0-9]*' | awk '{print $2}')
 
 # --- run this worker's assigned cell ---
-# train.py does not exist yet — this is the call shape it needs to
-# support once it does. Update this line when it's built.
+# G0 (2026-08-12): points at scripts/g0_sweep.py's manifest mode (checkpoint-grid
+# sweep, not a train.py rank/lr/seed cell — train.py doesn't exist yet). Update
+# this line to `python -m indbw.train --manifest sweep_manifest.json --worker-id
+# ${WORKER_ID}` once a train.py-shaped sweep (M1-M8) is the one being parallelized.
 #
 # The `pip install` reconciles the AMI-baked venv against whatever this
 # commit's pyproject.toml actually declares — the venv is a snapshot
 # from image-build time, and without this a dependency fix merged to
 # the repo (e.g. a version pin) silently never reaches a worker
 # launched from an older AMI.
-su - "${TARGET_USER}" -c "cd ${REPO_DIR} && source /home/ubuntu/venv/bin/activate && pip install -e '.[dev]' && python -m indbw.train --manifest sweep_manifest.json --worker-id ${WORKER_ID}"
+su - "${TARGET_USER}" -c "cd ${REPO_DIR} && source /home/ubuntu/venv/bin/activate && pip install -e '.[dev]' && python scripts/g0_sweep.py --manifest sweep_manifest.json --worker-id ${WORKER_ID}"
 
 # --- push result, retrying through concurrent-worker collisions ---
 cd "${REPO_DIR}"

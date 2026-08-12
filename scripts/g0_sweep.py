@@ -163,16 +163,40 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--limit", type=int, default=None, help="only sweep the first N grid steps")
     parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        help="worker-split manifest (schema: {'workers': [{'worker_id', 'steps'}]}); "
+        "requires --worker-id. Restricts this run to the listed steps and writes to "
+        "a per-worker output file instead of the shared one, so concurrent workers "
+        "never append to the same file.",
+    )
+    parser.add_argument("--worker-id", type=int, default=None)
     args = parser.parse_args()
 
+    global RESULTS_PATH
     SCRATCH_HF_HOME.mkdir(parents=True, exist_ok=True)
     os.environ["HF_HOME"] = str(SCRATCH_HF_HOME)
 
     from indbw.models import checkpoint_steps
 
-    steps = checkpoint_steps()
-    if args.limit is not None:
-        steps = steps[: args.limit]
+    all_steps = checkpoint_steps()
+
+    if args.manifest is not None:
+        if args.worker_id is None:
+            raise SystemExit("--manifest requires --worker-id")
+        manifest = json.loads(args.manifest.read_text())
+        worker_entries = [w for w in manifest["workers"] if w["worker_id"] == args.worker_id]
+        if not worker_entries:
+            raise SystemExit(f"worker_id {args.worker_id} not found in {args.manifest}")
+        assigned = set(worker_entries[0]["steps"])
+        steps = [s for s in all_steps if s in assigned]
+        RESULTS_PATH = REPO_ROOT / "data" / f"g0_sweep_worker{args.worker_id}.jsonl"
+    else:
+        steps = all_steps
+        if args.limit is not None:
+            steps = steps[: args.limit]
 
     existing = load_existing_steps()
     print(
