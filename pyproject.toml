@@ -8,7 +8,11 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
     "torch",
-    "transformer_lens",
+    # <3.7.1 lacks a fix present in some (but not all) of its checkpoint-
+    # loading branches; the pythia branch itself is still unguarded even at
+    # 3.7.1 -- see the get_token_to_send workaround in models.py. Floor, not
+    # pin: newer releases are fine, an older resolution is not.
+    "transformer_lens>=3.7.1",
     # transformer_lens's neox weight conversion hardcodes GPTNeoXForCausalLM's
     # head as `embed_out`; transformers renamed it to `lm_head` after 5.9.0
     # (transformer_lens's own declared floor), breaking Pythia loading on an
