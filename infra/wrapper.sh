@@ -12,6 +12,7 @@ REGION="us-east-2"
 REPO_DIR="/home/ubuntu/Lora_inductionhead"
 WORKER_TEMPLATE="research-vm-worker-template"
 WORKER_BOOTSTRAP_TEMPLATE="$REPO_DIR/infra/worker-bootstrap.sh"
+BRANCH="$(cd "$REPO_DIR" && git rev-parse --abbrev-ref HEAD)"
 
 IMDS_TOKEN="$(curl -sX PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")"
 INSTANCE_ID="$(curl -s -H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}" http://169.254.169.254/latest/meta-data/instance-id)"
@@ -64,7 +65,8 @@ if [ -f "NEEDS_WORKERS" ]; then
   INSTANCE_IDS=()
 
   for WID in $WORKER_IDS; do
-    sed "s/__WORKER_ID__/${WID}/" "$WORKER_BOOTSTRAP_TEMPLATE" > "/tmp/worker-${WID}-userdata.sh"
+    sed -e "s/__WORKER_ID__/${WID}/" -e "s/__BRANCH__/${BRANCH}/" \
+      "$WORKER_BOOTSTRAP_TEMPLATE" > "/tmp/worker-${WID}-userdata.sh"
     WORKER_INSTANCE_ID=$(aws ec2 run-instances \
       --region "${REGION}" \
       --launch-template LaunchTemplateName="${WORKER_TEMPLATE}" \
