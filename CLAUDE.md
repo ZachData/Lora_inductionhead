@@ -223,7 +223,7 @@ These are not style preferences. See `PROJECT.md` §9.
 - Do not store merged models. LoRA factors only.
 - Do not sweep rank without sweeping lr independently per rank, or holding $\alpha/r$ fixed.
 - Do not use 410m for training. Forward-only probes at most.
-- Do not run AWS commands or launch instances.
+- Worker-instance lifecycle is allowed: launching/terminating workers for a sweep row (the `infra/wrapper.sh` + `infra/worker-bootstrap.sh` pattern) and self-stopping via `infra/teardown.sh`. Stay within this project's tagged resources (`Project=research-vm`); do not touch untagged or other projects' AWS resources, and do not create or modify IAM roles/policies.
 - Do not reintroduce LLC, SGLD, crosscoders, sparsity readouts, or the Markov substrate. All dropped deliberately (`PROJECT.md` §10).
 - Do not treat `sltdiff-readme.md` or any pre-2026-08 spec as authoritative. Superseded.
 
