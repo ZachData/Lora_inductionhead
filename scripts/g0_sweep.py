@@ -2,10 +2,17 @@
 
 PROJECT.md §8 gate. Sweeps max-over-heads PMS and ICL over the full
 checkpoint grid, appending one JSONL record per checkpoint to
-results/g0_sweep.jsonl (CLAUDE.md resumability: a checkpoint already
+data/g0_sweep.jsonl (CLAUDE.md resumability: a checkpoint already
 recorded is skipped on restart). Once the grid (or --limit prefix of it)
 is covered, runs indbw.gates.locate_transition over the accumulated
 series and prints the verdict.
+
+This is raw per-checkpoint telemetry feeding into the eventual G0
+results record, not itself a schema-validated results record -- it
+lives under data/, not results/, so CI's tier 2.5 (which walks
+results/ expecting schema.py-validated records, PROJECT.md §9) doesn't
+try to validate it. The actual G0 verdict, written once the sweep
+concludes, goes through schema.py and lands in results/.
 
 Eval set: N_eval repeated-random sequences of period T (PROJECT.md §5),
 fixed seed, held fixed across all checkpoints.
@@ -40,7 +47,7 @@ if TYPE_CHECKING:
     import torch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-RESULTS_PATH = REPO_ROOT / "results" / "g0_sweep.jsonl"
+RESULTS_PATH = REPO_ROOT / "data" / "g0_sweep.jsonl"
 SCRATCH_HF_HOME = Path("/home/ubuntu/.cache/g0_hf_scratch")
 
 sys.path.insert(0, str(REPO_ROOT / "src"))
