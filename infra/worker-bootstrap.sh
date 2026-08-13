@@ -24,10 +24,11 @@ WORKER_ID="__WORKER_ID__"
 # mid-run (e.g. OOM, PROJECT.md 2026-08-12) doesn't lose everything it had
 # already computed just because it never reached its final push. Empty ->
 # g0_sweep.py no-ops, unchanged from before this existed.
-S3_BUCKET=""   # TODO: fill in once the bucket exists
+S3_BUCKET="research-vm-shared-176048535722"
 HOURS=3   # hard cap per worker cell — shorter than the orchestrator's, tune per sweep.
-          # G0 (2026-08-12): ~19-20 checkpoints/worker * 5.5min ~= 1.75-1.83h; 3h leaves
-          # buffer for model-download variance without needing per-sweep tuning.
+          # G0 (2026-08-13): 7 workers (vCPU-quota ceiling incl. orchestrator, both
+          # t4g families are 2 vCPU regardless of small/medium) * ~21-22 checkpoints
+          # * 5.5min ~= 1.9-2.0h; 3h leaves buffer for download-time variance.
 
 IMDS_TOKEN=$(curl -sX PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
 INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}" http://169.254.169.254/latest/meta-data/instance-id)
