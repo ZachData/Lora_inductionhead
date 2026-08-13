@@ -48,6 +48,44 @@ def principal_angles(U: np.ndarray, V: np.ndarray) -> np.ndarray:
     return cast(np.ndarray, np.arccos(sigma))
 
 
+def subspace_projector(basis: np.ndarray, rtol: float = 1e-10) -> np.ndarray:
+    """Orthogonal projector onto the column space of `basis` ([d, k]).
+
+    Numerical rank is determined via SVD (singular values > rtol * the
+    largest one survive), not raw QR -- a rank-deficient or duplicated-
+    column basis must not inflate the projector's rank with directions
+    that aren't really part of the span.
+    """
+    if basis.ndim != 2:
+        raise ValueError(f"subspace_projector requires a 2D basis [d, k], got shape {basis.shape}")
+    U, S, _ = np.linalg.svd(basis, full_matrices=False)
+    if S.size == 0 or S[0] == 0.0:
+        raise ValueError("subspace_projector: basis is all-zero, span is undefined")
+    rank = int(np.sum(S > rtol * S[0]))
+    Ur = U[:, :rank]
+    return cast(np.ndarray, Ur @ Ur.T)
+
+
+def projection_energy_fraction(P: np.ndarray, M: np.ndarray) -> float:
+    """||P @ M||_F / ||M||_F for a projector P and a vector/matrix M.
+
+    In [0, 1] whenever P is an orthogonal projector (idempotent,
+    symmetric, singular values in {0, 1}), since that makes ||Px|| <=
+    ||x|| for every column of M.
+    """
+    if P.ndim != 2 or P.shape[0] != P.shape[1]:
+        raise ValueError(f"P must be a square projector matrix, got shape {P.shape}")
+    if M.ndim not in (1, 2) or M.shape[0] != P.shape[1]:
+        raise ValueError(f"M's leading dimension must match P's shape {P.shape}, got {M.shape}")
+    norm_m = float(np.linalg.norm(M))
+    if norm_m == 0.0:
+        raise ValueError("projection_energy_fraction is undefined for an all-zero M")
+    value = float(np.linalg.norm(P @ M) / norm_m)
+    if not (0.0 <= value <= 1.0 + 1e-8):
+        raise ValueError(f"projection_energy_fraction out of range: {value}")
+    return min(value, 1.0)
+
+
 def truncate_svd(M: np.ndarray, r: int) -> np.ndarray:
     """Best rank-r Frobenius approximation of M (Eckart-Young)."""
     if M.ndim != 2:

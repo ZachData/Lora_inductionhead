@@ -10,7 +10,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from indbw.algebra import phi, principal_angles, sym_antisym_split, truncate_svd
+from indbw.algebra import (
+    phi,
+    principal_angles,
+    projection_energy_fraction,
+    subspace_projector,
+    sym_antisym_split,
+    truncate_svd,
+)
 
 
 def _rng(seed: int) -> np.random.Generator:
@@ -151,3 +158,84 @@ def test_truncate_svd_rejects_out_of_range_rank() -> None:
         truncate_svd(M, 0)
     with pytest.raises(ValueError):
         truncate_svd(M, 4)
+
+
+# --- subspace_projector --------------------------------------------------
+
+
+def test_subspace_projector_single_vector_is_outer_product() -> None:
+    v = _rng(9).standard_normal(5)
+    v_hat = v / np.linalg.norm(v)
+    P = subspace_projector(v.reshape(-1, 1))
+    np.testing.assert_allclose(P, np.outer(v_hat, v_hat), rtol=1e-12, atol=1e-12)
+
+
+def test_subspace_projector_identity_columns_gives_diagonal_projector() -> None:
+    P = subspace_projector(np.eye(6)[:, :3])
+    expected = np.diag([1.0, 1.0, 1.0, 0.0, 0.0, 0.0])
+    np.testing.assert_allclose(P, expected, rtol=1e-12, atol=1e-12)
+
+
+def test_subspace_projector_is_idempotent_and_symmetric() -> None:
+    basis = _rng(10).standard_normal((7, 3))
+    P = subspace_projector(basis)
+    np.testing.assert_allclose(P @ P, P, rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(P, P.T, rtol=1e-12, atol=1e-12)
+
+
+def test_subspace_projector_trace_equals_rank() -> None:
+    basis = _rng(11).standard_normal((8, 4))
+    P = subspace_projector(basis)
+    assert np.trace(P) == pytest.approx(4.0, rel=1e-10)
+
+
+def test_subspace_projector_duplicated_column_does_not_inflate_rank() -> None:
+    # Rank-deficient basis (repeated column): numerical rank must come from
+    # the SVD, not from naively trusting the number of input columns, or a
+    # duplicated direction would silently double-count as extra rank.
+    v = _rng(12).standard_normal(5)
+    basis = np.column_stack([v, v])
+    P = subspace_projector(basis)
+    assert np.trace(P) == pytest.approx(1.0, abs=1e-8)
+
+
+def test_subspace_projector_all_zero_basis_raises() -> None:
+    with pytest.raises(ValueError):
+        subspace_projector(np.zeros((5, 2)))
+
+
+# --- projection_energy_fraction -------------------------------------------
+
+
+def test_projection_energy_fraction_is_one_when_M_lies_in_span() -> None:
+    rng = _rng(13)
+    U = subspace_projector(rng.standard_normal((6, 2)))
+    # Build M whose columns are literal combinations of U's own range --
+    # project a random matrix through U first so M = U @ M is exact.
+    M = U @ rng.standard_normal((6, 3))
+    assert projection_energy_fraction(U, M) == pytest.approx(1.0, rel=1e-10)
+
+
+def test_projection_energy_fraction_is_zero_when_M_is_orthogonal_to_span() -> None:
+    # Disjoint coordinate blocks: P projects onto the first 3 axes, M lives
+    # entirely in the last 3 -- P @ M is exactly zero.
+    P = subspace_projector(np.eye(6)[:, :3])
+    M = np.eye(6)[:, 3:]
+    assert projection_energy_fraction(P, M) == pytest.approx(0.0, abs=1e-12)
+
+
+def test_projection_energy_fraction_identity_projector_is_always_one() -> None:
+    M = _rng(14).standard_normal((5, 4))
+    assert projection_energy_fraction(np.eye(5), M) == pytest.approx(1.0, rel=1e-12)
+
+
+def test_projection_energy_fraction_rejects_all_zero_M() -> None:
+    P = subspace_projector(np.eye(4)[:, :2])
+    with pytest.raises(ValueError):
+        projection_energy_fraction(P, np.zeros((4, 3)))
+
+
+def test_projection_energy_fraction_rejects_shape_mismatch() -> None:
+    P = subspace_projector(np.eye(4)[:, :2])
+    with pytest.raises(ValueError):
+        projection_energy_fraction(P, np.zeros((5, 3)))

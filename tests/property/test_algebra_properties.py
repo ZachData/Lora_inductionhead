@@ -10,7 +10,14 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from indbw.algebra import phi, principal_angles, sym_antisym_split, truncate_svd
+from indbw.algebra import (
+    phi,
+    principal_angles,
+    projection_energy_fraction,
+    subspace_projector,
+    sym_antisym_split,
+    truncate_svd,
+)
 
 _seeds = st.integers(min_value=0, max_value=2**31 - 1)
 _sizes = st.integers(min_value=2, max_value=8)
@@ -80,3 +87,24 @@ def test_truncate_svd_rank_bounded(seed: int, n: int) -> None:
     r = max(1, n - 1)
     approx = truncate_svd(M, r)
     assert np.linalg.matrix_rank(approx) <= r
+
+
+@given(seed=_seeds, n=_sizes)
+def test_projection_energy_fraction_in_unit_interval(seed: int, n: int) -> None:
+    rng = np.random.default_rng(seed)
+    k = max(1, n - 1)
+    P = subspace_projector(rng.standard_normal((n, k)))
+    M = rng.standard_normal((n, min(3, n)))
+    if np.allclose(M, 0):
+        return
+    value = projection_energy_fraction(P, M)
+    assert 0.0 <= value <= 1.0
+
+
+@given(seed=_seeds, n=_sizes)
+def test_subspace_projector_range_is_fixed_by_the_identity_projector(seed: int, n: int) -> None:
+    # P = I always has rank n and passes every vector through unchanged --
+    # a degenerate but exact case that catches an off-by-one in rank
+    # thresholding at the full-rank boundary.
+    P = subspace_projector(np.eye(n))
+    np.testing.assert_allclose(P, np.eye(n), rtol=1e-10, atol=1e-10)

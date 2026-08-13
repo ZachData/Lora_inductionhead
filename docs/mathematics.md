@@ -158,6 +158,16 @@ rank exactly 1 per LoRA rank, square, $\varphi$ well-defined. **Adapt $W_Q$ only
 
 **Prerequisite this creates.** With $W_K$ frozen, the key-side directions are whatever $W_K$ already reads at checkpoint $A$. If $W_K$ at $A$ has no overlap with the previous-token head's output subspace, *no* $\Delta W_Q$ at any rank can build the match, and the result would read as a capacity limit when it is a missing-prerequisite. Measure $\|P_{\text{prev-tok}} W_K\|_F / \|W_K\|_F$ at $A$ before running anything. Minutes of compute, and it is the cheapest way to avoid a wasted fortnight.
 
+**Making $P_{\text{prev-tok}}$ concrete (G1).** Neither this section nor PROJECT.md §5/§8 gives $P_{\text{prev-tok}}$ an actual construction — it is fixed here, once, before any checkpoint is inspected (same discipline as `gates.py`'s G0 operationalization). The previous-token head writes $p_t$ into the residual stream through its own OV circuit; the set of directions it can possibly write is the row space of that head's $W_O \in \mathbb{R}^{d_h \times d}$ (equivalently, the column space of $W_O^\top$). So:
+
+$$P_{\text{prev-tok}} \;=\; U U^\top, \qquad U = \text{orthonormal basis for } \operatorname{col}(W_O^\top)$$
+
+computed via SVD (numerical rank, not a naive QR, so a rank-deficient $W_O$ at an early checkpoint can't inflate the projector). $W_K \in \mathbb{R}^{d \times d_h}$ for the candidate induction head is then projected directly: $P_{\text{prev-tok}} W_K \in \mathbb{R}^{d \times d_h}$, and the ratio is its Frobenius norm over $\|W_K\|_F$ — in $[0,1]$ by construction, since $P_{\text{prev-tok}}$ is an orthogonal projector.
+
+PROJECT.md §8 asks whether this ratio shows "non-negligible overlap" without a numeric cutoff. Rather than inventing one, G1 reuses the random-subspace-null convention §6 already pre-registers for H4's $h0_6$: draw $N$ random rank-matched subspaces of $\mathbb{R}^d$, compute the same ratio against each, and call the observed ratio non-negligible iff it exceeds the 95th percentile of that null. Implementation: `indbw.gates.k_composition_overlap` (built on `indbw.algebra.subspace_projector` / `projection_energy_fraction`).
+
+The candidate induction head itself is identified independently of $A$: since $A$ is defined as pre-transition (no head above PMS 0.1), $A$'s own PMS values are uninformative for picking "the" induction head. G1 instead uses whichever (layer, head) has the highest PMS at $B$ — the same head, evaluated at $A$'s frozen weights — since that is the head whose $W_K$ any QK-arm training run would actually be adapting around.
+
 ---
 
 ## 10. Splitting the circuit — yes, and here is the split

@@ -1,4 +1,4 @@
-"""Gate-detection logic for PROJECT.md §8's G0 protocol.
+"""Gate-detection logic for PROJECT.md §8's G0 and G1 protocols.
 
 Pure function over a per-checkpoint probe series -- not a probes.py metric
 itself (CI's METRIC_VERSION hash covers only algebra.py/probes.py, the
@@ -18,6 +18,11 @@ verdicts" rule. The operationalization below (baseline = ICL at step 0;
 "transition" = the first grid step where max-over-heads PMS crosses the
 0.1 threshold) is stated here, before any checkpoint has been swept, per
 PROJECT.md §11's own requirement that such rules be fixed in advance.
+
+G1 (`locate_prev_token_head`, `k_composition_overlap`) follows the same
+discipline for PROJECT.md §8's prerequisite check; see
+`k_composition_overlap`'s own docstring for how "non-negligible overlap"
+is made computable.
 """
 
 from __future__ import annotations
@@ -25,6 +30,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+
+from indbw.algebra import projection_energy_fraction, subspace_projector
 
 
 @dataclass(frozen=True)
@@ -117,4 +124,113 @@ def locate_transition(
         b_step=int(steps[b_idx]),
         bracket_width=int(bracket_width),
         passed=bracket_width <= max_bracket_width,
+    )
+
+
+@dataclass(frozen=True)
+class PrevTokenHeadResult:
+    """Outcome of locating the previous-token head at checkpoint A (PROJECT.md §8 G1)."""
+
+    layer: int
+    head: int
+    score: float
+    found: bool  # score >= threshold
+
+
+def locate_prev_token_head(
+    prev_token_scores: np.ndarray, *, threshold: float = 0.3
+) -> PrevTokenHeadResult:
+    """Argmax-scoring head over prev_token_scores[layer, head] at checkpoint A.
+
+    PROJECT.md §8: "does a previous-token head exist (prev-token score
+    >= 0.3)?" -- the candidate head is whichever one scores highest;
+    `found` is that score crossing the pre-registered 0.3 threshold.
+
+    Raises ValueError on malformed input (wrong ndim, non-finite, out
+    of [0,1]) rather than returning a plausible-looking wrong head.
+    """
+    if prev_token_scores.ndim != 2:
+        raise ValueError(
+            f"prev_token_scores must be [n_layers, n_heads], got shape {prev_token_scores.shape}"
+        )
+    if not np.all(np.isfinite(prev_token_scores)):
+        raise ValueError("prev_token_scores contains non-finite values")
+    if np.any((prev_token_scores < -1e-8) | (prev_token_scores > 1 + 1e-8)):
+        raise ValueError(f"prev_token_scores out of [0, 1] range: {prev_token_scores}")
+    layer, head = np.unravel_index(int(np.argmax(prev_token_scores)), prev_token_scores.shape)
+    score = float(prev_token_scores[layer, head])
+    return PrevTokenHeadResult(
+        layer=int(layer), head=int(head), score=score, found=score >= threshold
+    )
+
+
+@dataclass(frozen=True)
+class OverlapResult:
+    """K-composition overlap between a previous-token head and a candidate
+    induction head's frozen $W_K$ (PROJECT.md §8/§9, docs/mathematics.md §9)."""
+
+    ratio: float
+    null_percentile_value: float
+    significant: bool  # ratio > null_percentile_value
+
+
+def k_composition_overlap(
+    W_O_prev: np.ndarray,
+    W_K_target: np.ndarray,
+    *,
+    n_null_draws: int = 100,
+    percentile: float = 95.0,
+    seed: int = 0,
+) -> OverlapResult:
+    r"""$\|P_{\text{prev-tok}} W_K\|_F / \|W_K\|_F$ vs. a random-subspace null.
+
+    W_O_prev: [d_head, d_model], the previous-token head's output
+    projection. W_K_target: [d_model, d_head], the candidate induction
+    head's frozen key projection at checkpoint A.
+
+    $P_{\text{prev-tok}}$ is the orthogonal projector onto the previous-
+    token head's output subspace -- the column space of `W_O_prev.T`,
+    i.e. the residual-stream directions that head's OV circuit can write
+    into (docs/mathematics.md §8's $p_t$, written by component 1 of
+    §10's three-part split). This is the operationalization referenced
+    by docs/mathematics.md §9's "measure the overlap at A before running
+    anything" and PROJECT.md §5's "prerequisite overlap" row -- neither
+    source gives $P_{\text{prev-tok}}$ a concrete construction, so it is
+    fixed here, before any checkpoint was inspected, matching gates.py's
+    own precedent for `locate_transition`.
+
+    PROJECT.md §8 asks for "non-negligible overlap" without a numeric
+    cutoff. Rather than inventing an arbitrary one, this reuses the
+    random-subspace-null convention PROJECT.md §6 already pre-registers
+    for H4's h0_6 (observed value vs. the 95th percentile of the same
+    statistic over random draws): `significant` is True iff the observed
+    ratio exceeds the `percentile`-th percentile of the same ratio
+    computed against `n_null_draws` random subspaces of matching rank.
+
+    Raises ValueError on a d_model mismatch between the two matrices.
+    """
+    if W_O_prev.ndim != 2 or W_K_target.ndim != 2:
+        raise ValueError("k_composition_overlap requires 2D W_O_prev and W_K_target")
+    _, d_model_o = W_O_prev.shape
+    d_model_k, _ = W_K_target.shape
+    if d_model_o != d_model_k:
+        raise ValueError(
+            f"W_O_prev's d_model ({d_model_o}) must match W_K_target's d_model ({d_model_k})"
+        )
+
+    P = subspace_projector(W_O_prev.T)
+    ratio = projection_energy_fraction(P, W_K_target)
+
+    rank = round(float(np.trace(P)))
+    rng = np.random.default_rng(seed)
+    null_ratios = np.empty(n_null_draws)
+    for i in range(n_null_draws):
+        random_basis = rng.standard_normal((d_model_o, rank))
+        null_ratios[i] = projection_energy_fraction(subspace_projector(random_basis), W_K_target)
+    null_percentile_value = float(np.percentile(null_ratios, percentile))
+
+    return OverlapResult(
+        ratio=ratio,
+        null_percentile_value=null_percentile_value,
+        significant=ratio > null_percentile_value,
     )
