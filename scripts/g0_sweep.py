@@ -38,6 +38,7 @@ import argparse
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -76,12 +77,36 @@ def load_existing_steps() -> dict[int, dict]:
     return records
 
 
+def sync_to_s3(path: Path, bucket: str) -> None:
+    """Best-effort push of a local results file to S3, keyed by filename.
+
+    A durability backstop against a worker dying mid-run before it ever
+    reaches its final git push (CLAUDE.md resumability) -- not the source
+    of truth. The local file always is, so this never raises: a transient
+    S3/network failure is a lost backup, not a lost checkpoint, and must
+    not take the sweep down with it. Empty bucket disables it entirely
+    (default: no AWS calls, no behavior change from before this existed).
+    """
+    if not bucket:
+        return
+    try:
+        subprocess.run(
+            ["aws", "s3", "cp", str(path), f"s3://{bucket}/g0_sweep/{path.name}"],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+    except Exception as exc:  # noqa: BLE001 -- deliberate, see docstring: must never propagate
+        print(f"WARNING: S3 sync of {path.name} failed ({exc}); continuing locally", flush=True)
+
+
 def append_record(record: dict) -> None:
     RESULTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     with RESULTS_PATH.open("a") as f:
         f.write(json.dumps(record) + "\n")
         f.flush()
         os.fsync(f.fileno())
+    sync_to_s3(RESULTS_PATH, os.environ.get("G0_S3_BUCKET", ""))
 
 
 def sweep_one_checkpoint(step: int, eval_tokens: torch.Tensor, T: int, batch_size: int) -> dict:

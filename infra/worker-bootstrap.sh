@@ -19,6 +19,12 @@ BRANCH="__BRANCH__"
 SSM_KEY_PARAM="/research-vm/github-deploy-key"
 REGION="us-east-2"
 WORKER_ID="__WORKER_ID__"
+# Durability backstop, not the source of truth (git push still is): synced
+# after every checkpoint via g0_sweep.py's sync_to_s3, so a worker killed
+# mid-run (e.g. OOM, PROJECT.md 2026-08-12) doesn't lose everything it had
+# already computed just because it never reached its final push. Empty ->
+# g0_sweep.py no-ops, unchanged from before this existed.
+S3_BUCKET=""   # TODO: fill in once the bucket exists
 HOURS=3   # hard cap per worker cell — shorter than the orchestrator's, tune per sweep.
           # G0 (2026-08-12): ~19-20 checkpoints/worker * 5.5min ~= 1.75-1.83h; 3h leaves
           # buffer for model-download variance without needing per-sweep tuning.
@@ -67,7 +73,7 @@ HARD_CAP_JOB=$(echo "aws ec2 stop-instances --region ${REGION} --instance-ids ${
 # from image-build time, and without this a dependency fix merged to
 # the repo (e.g. a version pin) silently never reaches a worker
 # launched from an older AMI.
-su - "${TARGET_USER}" -c "cd ${REPO_DIR} && source /home/ubuntu/venv/bin/activate && pip install -e '.[dev]' && python scripts/g0_sweep.py --manifest sweep_manifest.json --worker-id ${WORKER_ID}"
+su - "${TARGET_USER}" -c "cd ${REPO_DIR} && source /home/ubuntu/venv/bin/activate && pip install -e '.[dev]' && export G0_S3_BUCKET='${S3_BUCKET}' && python scripts/g0_sweep.py --manifest sweep_manifest.json --worker-id ${WORKER_ID}"
 
 # --- push result, retrying through concurrent-worker collisions ---
 cd "${REPO_DIR}"
