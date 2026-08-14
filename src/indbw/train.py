@@ -405,8 +405,22 @@ def train_lora(model: HookedTransformer, config: TrainConfig) -> TrainResult:
             )
 
         if step % config.eval_every == 0 or step == config.max_steps:
-            r = compute_recovery(model, hooks, eval_tokens, config.T, config.icl_a, config.icl_b)
+            # batch_size=8, not compute_recovery's default 32: a full-vocab
+            # logits tensor at batch_size*config.T*2*d_vocab*4 bytes gets
+            # large fast (32 batches at T=128/d_vocab=50304 is ~1.65GB per
+            # batch), which swap-thrashed a real periodic eval during a G2
+            # run to an unrecoverable halt (PROJECT.md §10, 2026-08-14). 8
+            # keeps a single batch's peak footprint well bounded regardless
+            # of what eval_n a caller picks.
+            r = compute_recovery(
+                model, hooks, eval_tokens, config.T, config.icl_a, config.icl_b, batch_size=8
+            )
             recovery_history.append((step, r))
+            print(
+                f"  step {step}/{config.max_steps} loss={loss.item():.4f} R={r:.4f} "
+                f"elapsed={time.time() - t0:.0f}s",
+                flush=True,
+            )
             if r >= config.criterion_r:
                 reached = True
                 break

@@ -84,7 +84,17 @@ TRAIN_SEED = 0
 EVAL_SEED = 0  # matches G0/G1's canonical eval seed
 CRITERION_R = 0.80  # PROJECT.md §6
 MAX_WALL_CLOCK_S = 2700.0  # 45 min hard budget, independent of any OS-level cap
-TRAIN_EVAL_N = 128  # cheap periodic checks during training
+# 16, not 128: this box has 1.8GB RAM (§11). A first real attempt (no swap
+# active) hit the OOM killer outright; a second attempt (swap active)
+# survived load and a few clean training steps (~3.7s/step, confirmed by
+# direct profiling) but then swap-thrashed into an unrecoverable D-state
+# hang past 56 minutes wall-clock -- diagnosed to compute_recovery's
+# internal eval batch_size=32 (8x train batch_size=4) periodically spiking
+# peak memory during training, whose high-water-mark then persists (CPU
+# torch's allocator doesn't return memory to the OS). Shrinking the cheap
+# periodic-check eval set is a config-only mitigation; the canonical
+# FINAL_EVAL_N=512 check below still runs once, at the end, unchanged.
+TRAIN_EVAL_N = 16  # cheap periodic checks during training
 FINAL_EVAL_N = 512  # PROJECT.md §5's canonical N_eval, for the recorded observed value
 
 
@@ -211,7 +221,12 @@ def main() -> None:
         alpha=config.alpha,
     )
     hooks = build_hooks(config.arm, config.layer, config.head, factors)
-    final_recovery = compute_recovery(model, hooks, eval_tokens, T, icl_a, icl_b)
+    # batch_size=4, not compute_recovery's default 32: at T=128 (seq_len=256)
+    # and d_vocab=50304, one batch's full-vocab logits tensor is
+    # batch_size*256*50304*4 bytes -- 32 gives ~1.65GB, which alone exceeds
+    # this box's 1.8GB RAM and swap-thrashed a real run to an unrecoverable
+    # halt (PROJECT.md §10, 2026-08-14 G2 rerun). 4 keeps it to ~196MB.
+    final_recovery = compute_recovery(model, hooks, eval_tokens, T, icl_a, icl_b, batch_size=4)
     del model
 
     observed = {
