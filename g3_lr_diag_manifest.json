@@ -1,0 +1,10 @@
+{
+  "workers": [
+    {"worker_id": 0, "lr": 0.0001},
+    {"worker_id": 1, "lr": 0.001},
+    {"worker_id": 2, "lr": 0.003},
+    {"worker_id": 3, "lr": 0.01},
+    {"worker_id": 4, "lr": 0.03},
+    {"worker_id": 5, "lr": 0.1}
+  ]
+}
