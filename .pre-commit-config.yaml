@@ -11,6 +11,13 @@ repos:
       - id: mypy
         additional_dependencies: []
 
-  # Metric-hash check belongs here too (CLAUDE.md, "Hygiene" — "so a
-  # wasted CI cycle costs seconds instead of minutes"). Add once the
-  # hash mechanism itself is designed; see the note in ci.yml tier 0.
+  # Metric-hash check (CLAUDE.md, "Hygiene" — "so a wasted CI cycle
+  # costs seconds instead of minutes"). Same gate CI tier 0 runs.
+  - repo: local
+    hooks:
+      - id: metric-hash
+        name: metric-hash check (METRIC_VERSION vs. algebra.py/probes.py)
+        entry: python scripts/check_metric_hash.py
+        language: system
+        pass_filenames: false
+        files: ^(src/indbw/(algebra|probes|schema)\.py|metric_hash\.json)$
