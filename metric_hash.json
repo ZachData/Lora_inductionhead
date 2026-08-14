@@ -1,0 +1,23 @@
+{
+  "aggregate": "a5592c333ed38c26cee28a0715d506eb95c6c654f8e206a6de3417d4b963be4c",
+  "definitions": {
+    "algebra.py": {
+      "phi": "cf922ba52d22c52f",
+      "principal_angles": "ab8267fc928a1e82",
+      "projection_energy_fraction": "cd849e38e30bd4e2",
+      "subspace_projector": "e21ce0c5892b473e",
+      "sym_antisym_split": "fad50f04a998507e",
+      "truncate_svd": "ff2d9d3e25f5404b"
+    },
+    "probes.py": {
+      "_require_square_attention": "75aac9d7bdc3e7d1",
+      "clamp_recovery": "b53b2a622e7d343f",
+      "copying_score": "4bdd84827776d5c9",
+      "icl_score": "cf9235cfeecd16a5",
+      "prefix_matching_score": "6a42346a4a15bdaa",
+      "prev_token_score": "933383b60892df6e",
+      "recovery": "f465872e3ca23a2c"
+    }
+  },
+  "metric_version": "0.1.0"
+}

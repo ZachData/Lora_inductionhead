@@ -16,13 +16,11 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
       - run: mypy src/indbw
-      # Metric-hash check: not yet designed. CLAUDE.md specifies the
-      # intent (hash probes.py + algebra.py; fail if it changes without
-      # a METRIC_VERSION bump) but not the storage/comparison mechanism.
-      # This is a real gap, not an oversight — design it test-first in
-      # a work session rather than inventing the mechanism here.
-      - run: |
-          echo "metric-hash check: not yet implemented, see CLAUDE.md tier 0"
+      # Metric-hash check (CLAUDE.md tier 0): fails if a metric
+      # definition in probes.py or algebra.py changed without a
+      # METRIC_VERSION bump. Mechanism and what counts as a change:
+      # src/indbw/metric_hash.py; baseline: metric_hash.json.
+      - run: python scripts/check_metric_hash.py
 
   tier1-unit:
     runs-on: ubuntu-latest
@@ -44,7 +42,11 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -e ".[dev]"
-      - run: pytest tests/property -q
+      # CLAUDE.md tier 2 is "tests/property + fixture-model tests +
+      # smoke test". tests/smoke runs the whole path end to end on a
+      # randomly-initialized model so integration breakage surfaces here
+      # rather than three hours into a real run.
+      - run: pytest tests/property tests/smoke -q
 
   tier2_5-schema-and-verdicts:
     runs-on: ubuntu-latest
