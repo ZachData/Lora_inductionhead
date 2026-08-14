@@ -84,6 +84,33 @@ def build_delta(
     )
 
 
+def bandwidth(rank: int, d_in: int, d_out: int) -> int:
+    """beta = r(d_in + d_out): the update's free-parameter count (PROJECT.md §5).
+
+    Lives here rather than in probes.py because it is a property of the
+    parameterization, not a measurement of a model -- it is arithmetic on
+    a config, computable before a single forward pass, and keeping it out
+    of probes.py keeps the METRIC_VERSION surface to things that actually
+    read a model (see metric_hash.py). It is what the h0_3 control is
+    matched *on* (indbw.nulls.matched_beta_support).
+    """
+    if rank < 1:
+        raise ValueError(f"rank must be >= 1, got {rank}")
+    if d_in < 1 or d_out < 1:
+        raise ValueError(f"d_in and d_out must be >= 1, got {d_in}, {d_out}")
+    return rank * (d_in + d_out)
+
+
+def bandwidth_fraction(rank: int, d_in: int, d_out: int) -> float:
+    """beta as a fraction of the adapted matrix's own parameter count (PROJECT.md §5).
+
+    Exceeds 1.0 once r(d_in + d_out) > d_in * d_out -- that is a real
+    property of a generous rank, not an error, and it is exactly the
+    regime where `matched_beta_support` refuses to build a control.
+    """
+    return bandwidth(rank, d_in, d_out) / float(d_in * d_out)
+
+
 def inject(base_weight: np.ndarray, delta: np.ndarray) -> np.ndarray:
     """base_weight + delta, for adding a trained update to a frozen weight (PROJECT.md §2)."""
     if base_weight.shape != delta.shape:

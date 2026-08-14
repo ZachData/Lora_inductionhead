@@ -44,9 +44,10 @@ Storage: LoRA factors only (B, A as plain numpy arrays via
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 import torch
@@ -58,6 +59,13 @@ from indbw.probes import icl_score, recovery
 
 Arm = Literal["QK", "OV"]
 ARMS: tuple[Arm, ...] = ("QK", "OV")
+
+#: What `HookedTransformer.run_with_hooks` accepts for `fwd_hooks`. The
+#: callables are typed `Callable[..., Any]` rather than a precise
+#: (tensor, HookPoint) -> tensor signature because that is what
+#: transformer_lens's own annotation says; narrowing it here would be a
+#: fiction mypy would then have to be told to ignore at the call site.
+HookList = list[tuple[str | Callable[..., Any], Callable[..., Any]]]
 
 
 class TrainingBudgetExceeded(RuntimeError):
@@ -142,7 +150,7 @@ def factor_shapes(model: HookedTransformer, arm: Arm) -> tuple[int, int]:
     raise ValueError(f"unknown arm {arm!r}, expected one of {ARMS}")
 
 
-def qk_hooks(layer: int, head: int, factors: LoRAFactors) -> list[tuple[str, object]]:
+def qk_hooks(layer: int, head: int, factors: LoRAFactors) -> HookList:
     """Forward hooks adding `factors.delta()` to head `head`'s query at
     `layer`. Captures that head's normalized residual input (what W_Q
     actually multiplies) via a hook on ln1's output, one step earlier in
@@ -169,7 +177,7 @@ def qk_hooks(layer: int, head: int, factors: LoRAFactors) -> list[tuple[str, obj
     ]
 
 
-def ov_hooks(layer: int, head: int, factors: LoRAFactors) -> list[tuple[str, object]]:
+def ov_hooks(layer: int, head: int, factors: LoRAFactors) -> HookList:
     """Forward hooks adding `factors.delta()`'s contribution of head
     `head` at `layer` directly onto that block's summed attention output
     (post W_O, pre residual-add) -- the OV analogue of `qk_hooks`.
@@ -192,7 +200,7 @@ def ov_hooks(layer: int, head: int, factors: LoRAFactors) -> list[tuple[str, obj
     ]
 
 
-def build_hooks(arm: Arm, layer: int, head: int, factors: LoRAFactors) -> list[tuple[str, object]]:
+def build_hooks(arm: Arm, layer: int, head: int, factors: LoRAFactors) -> HookList:
     if arm == "QK":
         return qk_hooks(layer, head, factors)
     if arm == "OV":
@@ -260,7 +268,7 @@ def first_copy_nll(logits: torch.Tensor, tokens: torch.Tensor, T: int) -> torch.
 @torch.no_grad()
 def compute_recovery(
     model: HookedTransformer,
-    hooks: list[tuple[str, object]],
+    hooks: HookList,
     eval_tokens: torch.Tensor,
     T: int,
     icl_a: float,
@@ -387,7 +395,9 @@ def train_lora(model: HookedTransformer, config: TrainConfig) -> TrainResult:
         _check_finite_loss(loss, step)
 
         optimizer.zero_grad()
-        loss.backward()
+        # torch's `backward` is unannotated in the installed stubs; the
+        # ignore is a stub gap, not a real typing problem here.
+        loss.backward()  # type: ignore[no-untyped-call]
         optimizer.step()
         loss_history.append(float(loss.item()))
 
