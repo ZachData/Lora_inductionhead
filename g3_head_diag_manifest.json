@@ -1,0 +1,7 @@
+{
+  "workers": [
+    {"worker_id": 0, "layer": 2, "head": 1},
+    {"worker_id": 1, "layer": 3, "head": 0},
+    {"worker_id": 2, "layer": 4, "head": 6}
+  ]
+}
