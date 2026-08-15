@@ -189,9 +189,13 @@ def main() -> None:
     RAW_ARTIFACT_PATH.write_text(json.dumps(raw_artifact, indent=2, sort_keys=True) + "\n")
 
     print(f"G2 verdict: {verdict}")
-    print(f"  final_recovery={final_recovery:.4f} steps_run={STEPS_RUN} wall_clock_s={wall_clock_s:.1f}")
-    print(f"  projected full-sweep ({n_sweep_cells} cells, {n_worker_fleet}-way): "
-          f"{projected_hours:.1f}h -> {cpu_gpu_decision}")
+    print(
+        f"  final_recovery={final_recovery:.4f} steps_run={STEPS_RUN} wall_clock_s={wall_clock_s:.1f}"
+    )
+    print(
+        f"  projected full-sweep ({n_sweep_cells} cells, {n_worker_fleet}-way): "
+        f"{projected_hours:.1f}h -> {cpu_gpu_decision}"
+    )
     print(f"  self-consistent: {record.is_self_consistent()}")
     print(f"  wrote {OUT_PATH} and {RAW_ARTIFACT_PATH}")
 

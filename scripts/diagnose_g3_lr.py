@@ -154,8 +154,10 @@ def run_one_cell(lr: float, worker_id: int, out_path: Path, max_steps: int = MAX
         f.write(json.dumps(record) + "\n")
     print(f"worker {worker_id} (lr={lr}): wrote {out_path}")
     if "loss_first" in record and "loss_last" in record:
-        print(f"  loss {record['loss_first']:.4f} -> {record['loss_last']:.4f}, "
-              f"final_recovery={record['final_recovery']:.4f}")
+        print(
+            f"  loss {record['loss_first']:.4f} -> {record['loss_last']:.4f}, "
+            f"final_recovery={record['final_recovery']:.4f}"
+        )
 
 
 def main() -> None:
