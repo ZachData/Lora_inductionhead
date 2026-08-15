@@ -1,0 +1,6 @@
+{
+  "workers": [
+    {"worker_id": 0, "lr": 1e-4},
+    {"worker_id": 1, "lr": 1e-5}
+  ]
+}
