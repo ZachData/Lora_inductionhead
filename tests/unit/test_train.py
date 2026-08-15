@@ -30,6 +30,7 @@ from indbw.train import (
     init_lora_factors,
     load_snapshot,
     ov_hooks,
+    qk_both_hooks,
     qk_hooks,
     save_snapshot,
     second_copy_nll,
@@ -198,6 +199,116 @@ def test_qk_delta_at_later_layer_does_not_affect_earlier_layer_activations(tiny_
     with torch.no_grad():
         factors.B += 1.0
     hooks = qk_hooks(layer=1, head=0, factors=factors)
+
+    tokens = torch.randint(0, tiny_model.cfg.d_vocab, (2, 12))
+    with torch.no_grad():
+        _, base_cache = tiny_model.run_with_cache(tokens, return_type="logits")
+        with tiny_model.hooks(fwd_hooks=hooks):
+            _, hooked_cache = tiny_model.run_with_cache(tokens, return_type="logits")
+
+    assert torch.equal(
+        base_cache["blocks.0.hook_resid_post"], hooked_cache["blocks.0.hook_resid_post"]
+    )
+
+
+# ---------------------------------------------------------------------------
+# 3b. qk_both_hooks -- diagnostic-only two-matrix hook (REVIEW.md 2026-08-14
+# W_K-bottleneck follow-up). Same discrimination/causality guards as
+# qk_hooks/ov_hooks above, since this is new hook-composition logic whose
+# correctness the diagnostic's conclusion depends on.
+# ---------------------------------------------------------------------------
+
+
+def test_qk_both_hooks_zero_delta_leaves_forward_pass_unchanged(tiny_model) -> None:
+    d_out, d_in = factor_shapes(tiny_model, "QK")
+    q_factors = init_lora_factors(d_out, d_in, rank=4, alpha=8.0, seed=0)
+    k_factors = init_lora_factors(d_out, d_in, rank=4, alpha=8.0, seed=1)
+    hooks = qk_both_hooks(layer=1, head=0, q_factors=q_factors, k_factors=k_factors)
+
+    tokens = torch.randint(0, tiny_model.cfg.d_vocab, (2, 12))
+    with torch.no_grad():
+        base_logits = tiny_model(tokens, return_type="logits")
+        hooked_logits = tiny_model.run_with_hooks(tokens, fwd_hooks=hooks, return_type="logits")
+
+    assert torch.equal(base_logits, hooked_logits)
+
+
+def test_qk_both_hooks_nonzero_delta_changes_forward_pass(tiny_model) -> None:
+    d_out, d_in = factor_shapes(tiny_model, "QK")
+    q_factors = init_lora_factors(d_out, d_in, rank=4, alpha=8.0, seed=0)
+    k_factors = init_lora_factors(d_out, d_in, rank=4, alpha=8.0, seed=1)
+    with torch.no_grad():
+        q_factors.B += 1.0
+        k_factors.B += 1.0
+    hooks = qk_both_hooks(layer=1, head=0, q_factors=q_factors, k_factors=k_factors)
+
+    tokens = torch.randint(0, tiny_model.cfg.d_vocab, (2, 12))
+    with torch.no_grad():
+        base_logits = tiny_model(tokens, return_type="logits")
+        hooked_logits = tiny_model.run_with_hooks(tokens, fwd_hooks=hooks, return_type="logits")
+
+    assert not torch.allclose(base_logits, hooked_logits)
+
+
+def test_qk_both_hooks_q_only_and_k_only_each_move_the_forward_pass(tiny_model) -> None:
+    # Guards against a copy-paste bug where add_delta_k silently reads/writes
+    # the q tensor (or vice versa) -- perturbing only one factor must still
+    # change the output, and perturbing neither must not.
+    d_out, d_in = factor_shapes(tiny_model, "QK")
+    tokens = torch.randint(0, tiny_model.cfg.d_vocab, (2, 12))
+    with torch.no_grad():
+        base_logits = tiny_model(tokens, return_type="logits")
+
+    zero_factors = init_lora_factors(d_out, d_in, rank=4, alpha=8.0, seed=0)
+    q_only = init_lora_factors(d_out, d_in, rank=4, alpha=8.0, seed=0)
+    with torch.no_grad():
+        q_only.B += 1.0
+    hooks_q_only = qk_both_hooks(layer=1, head=0, q_factors=q_only, k_factors=zero_factors)
+    with torch.no_grad():
+        logits_q_only = tiny_model.run_with_hooks(
+            tokens, fwd_hooks=hooks_q_only, return_type="logits"
+        )
+    assert not torch.allclose(base_logits, logits_q_only)
+
+    k_only = init_lora_factors(d_out, d_in, rank=4, alpha=8.0, seed=1)
+    with torch.no_grad():
+        k_only.B += 1.0
+    hooks_k_only = qk_both_hooks(layer=1, head=0, q_factors=zero_factors, k_factors=k_only)
+    with torch.no_grad():
+        logits_k_only = tiny_model.run_with_hooks(
+            tokens, fwd_hooks=hooks_k_only, return_type="logits"
+        )
+    assert not torch.allclose(base_logits, logits_k_only)
+    assert not torch.allclose(logits_q_only, logits_k_only)
+
+
+def test_qk_both_hooks_gradient_flows_to_both_factors_only(tiny_model) -> None:
+    freeze_base_model(tiny_model)
+    d_out, d_in = factor_shapes(tiny_model, "QK")
+    q_factors = init_lora_factors(d_out, d_in, rank=4, alpha=8.0, seed=0)
+    k_factors = init_lora_factors(d_out, d_in, rank=4, alpha=8.0, seed=1)
+    hooks = qk_both_hooks(layer=1, head=0, q_factors=q_factors, k_factors=k_factors)
+
+    tokens = torch.randint(0, tiny_model.cfg.d_vocab, (2, 10))
+    logits = tiny_model.run_with_hooks(tokens, fwd_hooks=hooks, return_type="logits")
+    loss = second_copy_nll(logits, tokens, T=5).mean()
+    loss.backward()
+
+    assert q_factors.B.grad is not None and torch.all(torch.isfinite(q_factors.B.grad))
+    assert q_factors.A.grad is not None and torch.all(torch.isfinite(q_factors.A.grad))
+    assert k_factors.B.grad is not None and torch.all(torch.isfinite(k_factors.B.grad))
+    assert k_factors.A.grad is not None and torch.all(torch.isfinite(k_factors.A.grad))
+    assert all(p.grad is None for p in tiny_model.parameters())
+
+
+def test_qk_both_hooks_at_later_layer_does_not_affect_earlier_layer_activations(tiny_model) -> None:
+    d_out, d_in = factor_shapes(tiny_model, "QK")
+    q_factors = init_lora_factors(d_out, d_in, rank=4, alpha=8.0, seed=0)
+    k_factors = init_lora_factors(d_out, d_in, rank=4, alpha=8.0, seed=1)
+    with torch.no_grad():
+        q_factors.B += 1.0
+        k_factors.B += 1.0
+    hooks = qk_both_hooks(layer=1, head=0, q_factors=q_factors, k_factors=k_factors)
 
     tokens = torch.randint(0, tiny_model.cfg.d_vocab, (2, 12))
     with torch.no_grad():

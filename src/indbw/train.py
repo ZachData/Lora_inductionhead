@@ -200,6 +200,58 @@ def ov_hooks(layer: int, head: int, factors: LoRAFactors) -> HookList:
     ]
 
 
+def qk_both_hooks(
+    layer: int, head: int, q_factors: LoRAFactors, k_factors: LoRAFactors
+) -> HookList:
+    """Diagnostic-only: adds independent deltas to *both* Q and K for one
+    head. Not part of the `Arm`/`build_hooks`/`TrainConfig` system and
+    never used by G2/G3 or the M1/M2 sweep -- PROJECT.md §3 requires
+    adapting exactly one matrix per bilinear form, since a two-matrix
+    delta destroys the rank/parity structure that analysis depends on.
+
+    Exists only to test a diagnostic question raised in PROJECT.md §11 /
+    REVIEW.md after G3's failure: does freezing $W_K$ at checkpoint A cap
+    what any rank of $\\Delta W_Q$ can reach, i.e. is G3's plateau a
+    $W_K$-bottleneck rather than a capacity limit? Letting $W_K$ adapt
+    too is the direct way to ask that, purely as a probe -- if it is
+    used for anything beyond a diagnostic run, that is a §3 protocol
+    change requiring the same human sign-off this function's use already
+    required (REVIEW.md, 2026-08-14 entry).
+
+    Shares one capture of `ln1.hook_normalized` (both hook_q and hook_k
+    read that same normalized residual input in this architecture) and
+    adds each factor's delta independently -- same capture-then-add
+    mechanics as `qk_hooks`, just duplicated onto a second hook point.
+    """
+    box: dict[str, torch.Tensor] = {}
+
+    def capture(x: torch.Tensor, hook: object) -> torch.Tensor:
+        box["x"] = x
+        return x
+
+    def add_delta_q(q: torch.Tensor, hook: object) -> torch.Tensor:
+        delta_w = q_factors.delta()
+        x = box["x"]
+        delta_q = torch.einsum("bpd,dh->bph", x, delta_w)
+        q = q.clone()
+        q[:, :, head, :] = q[:, :, head, :] + delta_q
+        return q
+
+    def add_delta_k(k: torch.Tensor, hook: object) -> torch.Tensor:
+        delta_w = k_factors.delta()
+        x = box["x"]
+        delta_k = torch.einsum("bpd,dh->bph", x, delta_w)
+        k = k.clone()
+        k[:, :, head, :] = k[:, :, head, :] + delta_k
+        return k
+
+    return [
+        (f"blocks.{layer}.ln1.hook_normalized", capture),
+        (f"blocks.{layer}.attn.hook_q", add_delta_q),
+        (f"blocks.{layer}.attn.hook_k", add_delta_k),
+    ]
+
+
 def build_hooks(arm: Arm, layer: int, head: int, factors: LoRAFactors) -> HookList:
     if arm == "QK":
         return qk_hooks(layer, head, factors)
