@@ -153,9 +153,12 @@ def load_wikitext_tokens(tokenizer: Any, split: str = "train") -> np.ndarray:
     (no network access from `tests/unit`); exercised directly by whichever
     diagnostic script calls it.
     """
-    from datasets import load_dataset
+    from datasets import load_dataset  # type: ignore[import-untyped]
 
-    ds = load_dataset("wikitext", "wikitext-2-raw-v1", split=split)
+    # "wikitext" (the legacy loading-script repo) is no longer resolvable
+    # under datasets>=5's script-loading removal; "Salesforce/wikitext" is
+    # the same data, parquet-backed, under HF's current dataset-loading path.
+    ds = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split=split)
     text = "\n".join(row["text"] for row in ds if row["text"].strip())
     ids = tokenizer(text, return_tensors=None)["input_ids"]
     return np.asarray(ids, dtype=np.int64)
