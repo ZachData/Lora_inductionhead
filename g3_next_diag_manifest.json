@@ -1,0 +1,7 @@
+{
+  "workers": [
+    {"worker_id": 0, "variant": "natural_text"},
+    {"worker_id": 1, "variant": "more_steps"},
+    {"worker_id": 2, "variant": "diff_checkpoint"}
+  ]
+}
