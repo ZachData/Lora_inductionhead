@@ -1,0 +1,30 @@
+{
+  "cpu_cost_to_close_the_token_gap_hours": 1525.5096888888888,
+  "g3": {
+    "batch_size": 4,
+    "flops_total_params": 173080471142400.0,
+    "loss_bearing_positions": 203200,
+    "seconds_per_step_measured": 5.495,
+    "seq_len": 256,
+    "steps": 400,
+    "tokens_per_step": 1024,
+    "tokens_total": 409600,
+    "trainable_params": 36864
+  },
+  "pythia": {
+    "flops_A_to_B_total_params": 1.318623954226643e+18,
+    "flops_A_to_next_grid_point_non_embedding": 1.158973216606126e+17,
+    "flops_A_to_next_grid_point_total_params": 4.3245194197755494e+17,
+    "steps_A_to_B": 1488,
+    "steps_A_to_next_grid_point": 488,
+    "tokens_A_to_B": 3120562176,
+    "tokens_A_to_next_grid_point": 1023410176,
+    "tokens_per_step": 2097152
+  },
+  "ratios": {
+    "batch_tokens_pythia_over_g3": 2048.0,
+    "flops_pythia_bracket_over_g3": 2498.56,
+    "tokens_pythia_A_to_B_over_g3": 7618.56,
+    "tokens_pythia_bracket_over_g3": 2498.56
+  }
+}

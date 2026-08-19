@@ -26,7 +26,13 @@ dependencies = [
 dev = [
     "pytest",
     "hypothesis",
-    "ruff",
+    # Pinned, not floated. CI installs from this file and runs `ruff
+    # check`/`ruff format --check` as a tier-0 gate, so any ruff release
+    # that adds a rule or changes formatting turns the build red on code
+    # nobody touched -- which has already cost this repo two "Fix CI"
+    # commits, and would have cost a third when ruff started reporting
+    # E402 on the sys.path-then-import pattern below. Bump deliberately.
+    "ruff==0.15.8",
     "mypy",
 ]
 
@@ -35,6 +41,25 @@ where = ["src"]
 
 [tool.ruff]
 line-length = 100
+
+[tool.ruff.lint.per-file-ignores]
+# scripts/ is not an installed package, so importing a script module (or
+# indbw itself, from a script) requires a sys.path insert first, and the
+# import therefore cannot be at the top of the file. E402 is unavoidable
+# in exactly these files and nowhere else -- listed one by one rather
+# than blanket-ignored per directory, so a genuinely misplaced import in
+# a new file still fails the gate.
+"scripts/check_metric_hash.py" = ["E402"]
+"scripts/run_g3.py" = ["E402"]
+"scripts/run_sweep.py" = ["E402"]
+"tests/unit/test_analyze_training_budget.py" = ["E402"]
+"tests/unit/test_diagnose_g3_reachability.py" = ["E402"]
+"tests/unit/test_g0_sweep.py" = ["E402"]
+"tests/unit/test_run_g3.py" = ["E402"]
+"tests/unit/test_run_sweep.py" = ["E402"]
+# A one-line lambda naming the comparison under test reads better than a
+# def here; the rule is about shadowing/readability in production code.
+"tests/unit/test_nulls.py" = ["E731"]
 
 [tool.mypy]
 python_version = "3.11"
