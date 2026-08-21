@@ -103,7 +103,7 @@ def test_per_token_flops_matches_its_closed_form() -> None:
     d, layers, vocab, seq = 512, 6, 50304, 2048
     f = budget.per_token_flops(d_model=d, n_layers=layers, d_vocab=vocab, seq_len=seq)
     assert f["body_matmuls"] == 6 * layers * 12 * d * d
-    assert f["attention_seq_squared"] == 12 * seq * d * layers
+    assert f["attention_seq_squared"] == 12 * seq * d * layers / 2  # causal: lower triangle
     assert f["unembedding"] == 6 * vocab * d
     assert f["total"] == pytest.approx(
         f["body_matmuls"] + f["attention_seq_squared"] + f["unembedding"], rel=1e-12
@@ -141,3 +141,17 @@ def test_body_term_recovers_6nd_when_the_other_two_are_negligible() -> None:
     n_body = layers * 12 * d * d
     assert f["body_matmuls"] == budget.flops_6nd(n_body, 1)
     assert f["total"] / f["body_matmuls"] < 1.001
+
+
+def test_causal_masking_halves_the_attention_term_and_nothing_else() -> None:
+    """The correction is worth a guard: it moves reported MFU by ~11%,
+    and applying it to the wrong term (or to the total) would be
+    invisible in every number the scripts print."""
+    full = budget.per_token_flops(causal=False)
+    causal = budget.per_token_flops(causal=True)
+    assert causal["attention_seq_squared"] == pytest.approx(
+        full["attention_seq_squared"] / 2, rel=1e-12
+    )
+    assert causal["body_matmuls"] == full["body_matmuls"]
+    assert causal["unembedding"] == full["unembedding"]
+    assert causal["total"] < full["total"]

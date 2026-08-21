@@ -69,6 +69,7 @@ def per_token_flops(
     n_layers: int = 6,
     d_vocab: int = 50304,
     seq_len: int = 2048,
+    causal: bool = True,
 ) -> dict[str, float]:
     """Forward+backward FLOPs per token, split into the three terms that
     actually matter at pythia-70m's shape.
@@ -80,8 +81,14 @@ def per_token_flops(
     against a 50304 vocab, so the unembedding projection alone is ~45% of
     every token's cost; and d_model is 512 against a 2048 sequence, so
     attention's seq^2 term -- which 6ND ignores entirely -- is another
-    ~22%. A GPU estimate built on 6ND alone is therefore both wrong and
+    ~12%. A GPU estimate built on 6ND alone is therefore both wrong and
     wrong in the direction that hides which kernel to optimize.
+
+    `causal=True` (the default) halves the attention term, since a
+    decoder computes only the lower triangle. This affects MFU and
+    achieved-FLOP/s figures but *not* any wall-clock projection, which is
+    extrapolated from measured tokens/s and never passes through a FLOP
+    count.
 
     Ratios in `analyze` are unaffected either way, since both sides of
     every ratio use the same formula.
@@ -89,7 +96,17 @@ def per_token_flops(
     n_body = n_layers * 12 * d_model * d_model
     n_embed = d_vocab * d_model
     body = 3 * 2 * n_body
+    # A decoder attends only to positions <= its own, so on average each
+    # query touches seq/2 keys, not seq. Counting the full square
+    # overstates the attention term by 2x -- and it is not a bookkeeping
+    # nicety: SDPA and FlashAttention with is_causal skip the upper
+    # triangle rather than computing and masking it, so the work really
+    # is halved. Left switchable because the full-square count is what a
+    # bidirectional encoder would cost, and because an implementation
+    # that masks after the fact does pay the full price.
     attention = 3 * 2 * 2 * seq_len * d_model * n_layers
+    if causal:
+        attention /= 2
     unembedding = 3 * 2 * n_embed
     return {
         "body_matmuls": float(body),
