@@ -93,3 +93,51 @@ def test_ratio_is_pretraining_over_g3(g2_stub: dict) -> None:
 def test_report_renders_without_error(g2_stub: dict) -> None:
     text = budget.format_report(budget.analyze(g2_stub))
     assert "Ratios (pretraining : G3)" in text
+
+
+def test_per_token_flops_matches_its_closed_form() -> None:
+    """Each term written out independently of the implementation:
+    body = 3 * 2 * (n_layers * 12 d^2), attention = 3 * 2 * 2 * seq * d *
+    n_layers, unembedding = 3 * 2 * (V * d). The leading 3 is
+    forward+backward; the 2 is multiply-accumulate."""
+    d, layers, vocab, seq = 512, 6, 50304, 2048
+    f = budget.per_token_flops(d_model=d, n_layers=layers, d_vocab=vocab, seq_len=seq)
+    assert f["body_matmuls"] == 6 * layers * 12 * d * d
+    assert f["attention_seq_squared"] == 12 * seq * d * layers
+    assert f["unembedding"] == 6 * vocab * d
+    assert f["total"] == pytest.approx(
+        f["body_matmuls"] + f["attention_seq_squared"] + f["unembedding"], rel=1e-12
+    )
+
+
+def test_attention_term_is_the_only_one_that_scales_with_sequence_length() -> None:
+    """Discrimination guard. The seq^2 term is the one 6ND omits, and the
+    reason it matters here is that d_model is small relative to seq. If
+    seq_len were inert -- or if it leaked into the other terms -- the
+    whole argument for not using 6ND would be wrong."""
+    a = budget.per_token_flops(seq_len=1024)
+    b = budget.per_token_flops(seq_len=2048)
+    assert b["attention_seq_squared"] == pytest.approx(2 * a["attention_seq_squared"], rel=1e-12)
+    assert a["body_matmuls"] == b["body_matmuls"]
+    assert a["unembedding"] == b["unembedding"]
+    assert b["total"] > a["total"]
+
+
+def test_6nd_overestimates_at_pythia_70m_shape() -> None:
+    """The claim the docstring makes, pinned. Not a regression baseline --
+    a closed-form comparison: 6 * N_total counts embed and unembed as if
+    both were dense matmuls per token, but only the unembedding is."""
+    f = budget.per_token_flops()
+    n_total = 6 * 12 * 512**2 + 2 * 50304 * 512
+    assert budget.flops_6nd(n_total, 1) > f["total"]
+
+
+def test_body_term_recovers_6nd_when_the_other_two_are_negligible() -> None:
+    """Sanity that the detailed formula degenerates to the standard one:
+    with a tiny vocab and a short sequence, only the weight matmuls
+    remain, and those are exactly 6 * N_body."""
+    d, layers = 512, 6
+    f = budget.per_token_flops(d_model=d, n_layers=layers, d_vocab=1, seq_len=1)
+    n_body = layers * 12 * d * d
+    assert f["body_matmuls"] == budget.flops_6nd(n_body, 1)
+    assert f["total"] / f["body_matmuls"] < 1.001

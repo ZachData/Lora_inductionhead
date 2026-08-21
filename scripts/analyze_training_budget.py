@@ -64,6 +64,41 @@ def flops_6nd(n_params: int, n_tokens: float) -> float:
     return 6.0 * n_params * n_tokens
 
 
+def per_token_flops(
+    d_model: int = 512,
+    n_layers: int = 6,
+    d_vocab: int = 50304,
+    seq_len: int = 2048,
+) -> dict[str, float]:
+    """Forward+backward FLOPs per token, split into the three terms that
+    actually matter at pythia-70m's shape.
+
+    `flops_6nd` with the full 70.4M parameter count is the convention the
+    literature uses, and at this shape it is ~23% high. The reason is
+    worth knowing before sizing a GPU run: 6ND assumes the weight matmuls
+    dominate, and here they are only a third of the work. d_model is 512
+    against a 50304 vocab, so the unembedding projection alone is ~45% of
+    every token's cost; and d_model is 512 against a 2048 sequence, so
+    attention's seq^2 term -- which 6ND ignores entirely -- is another
+    ~22%. A GPU estimate built on 6ND alone is therefore both wrong and
+    wrong in the direction that hides which kernel to optimize.
+
+    Ratios in `analyze` are unaffected either way, since both sides of
+    every ratio use the same formula.
+    """
+    n_body = n_layers * 12 * d_model * d_model
+    n_embed = d_vocab * d_model
+    body = 3 * 2 * n_body
+    attention = 3 * 2 * 2 * seq_len * d_model * n_layers
+    unembedding = 3 * 2 * n_embed
+    return {
+        "body_matmuls": float(body),
+        "attention_seq_squared": float(attention),
+        "unembedding": float(unembedding),
+        "total": float(body + attention + unembedding),
+    }
+
+
 def lora_trainable_params(rank: int, d_model: int = 512, d_head: int = 64) -> int:
     """B [d_model, r] + A [r, d_head] for the QK arm (indbw.train)."""
     return rank * d_model + rank * d_head

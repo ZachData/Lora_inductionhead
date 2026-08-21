@@ -52,6 +52,7 @@ line-length = 100
 "scripts/check_metric_hash.py" = ["E402"]
 "scripts/run_g3.py" = ["E402"]
 "scripts/run_sweep.py" = ["E402"]
+"scripts/bench_retrain_throughput.py" = ["E402"]
 "tests/unit/test_analyze_training_budget.py" = ["E402"]
 "tests/unit/test_diagnose_g3_reachability.py" = ["E402"]
 "tests/unit/test_g0_sweep.py" = ["E402"]
