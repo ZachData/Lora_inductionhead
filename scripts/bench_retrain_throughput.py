@@ -59,6 +59,55 @@ PYTHIA_70M = {
 DEFAULT_PEAK_TFLOPS = 59.5
 
 
+class NoAcceleratorError(RuntimeError):
+    """Raised rather than falling back to CPU. A CPU number here is not a
+    conservative estimate of a GPU number, it is a different measurement
+    by three orders of magnitude -- and it arrives formatted identically,
+    complete with a wall-clock projection and a fits/over verdict. That is
+    exactly the silent failure CLAUDE.md's TDD contract is written
+    against, so this refuses instead of reporting.
+    """
+
+
+def cuda_diagnostics() -> str:
+    """What to check when torch cannot see the GPU. Printed on refusal --
+    the failure is nearly always the install, not the machine."""
+    built_for = torch.version.cuda or "none (this is a CPU-only build of torch)"
+    return "\n".join(
+        [
+            f"  torch {torch.__version__}, built against CUDA: {built_for}",
+            f"  torch.cuda.is_available(): {torch.cuda.is_available()}",
+            f"  torch.cuda.device_count():  {torch.cuda.device_count()}",
+            "",
+            "  Most likely causes, in order:",
+            "   1. A CPU-only torch. conda-forge's `pytorch` resolves to the CPU",
+            "      build unless the CUDA variant is requested explicitly. If the",
+            "      line above says 'CPU-only build', this is it -- reinstall from",
+            "      the PyTorch index (see --help epilog).",
+            "   2. Driver not visible to the environment (containers, toolbox, and",
+            "      atomic/immutable distros). Check `nvidia-smi` outside Python; if",
+            "      that works and torch still says False, it is the container.",
+            "   3. A driver too old for the CUDA the wheel was built against.",
+            "",
+            "  Re-run with --allow-cpu only to exercise the code path. The numbers",
+            "  it prints are not usable for sizing a run.",
+        ]
+    )
+
+
+def resolve_device(requested: str, allow_cpu: bool) -> str:
+    if requested == "cuda" and not torch.cuda.is_available():
+        raise NoAcceleratorError(
+            "asked for --device cuda, but torch reports no CUDA device.\n\n" + cuda_diagnostics()
+        )
+    if requested == "cpu" and not allow_cpu:
+        raise NoAcceleratorError(
+            "refusing to benchmark on CPU: the result would not answer the "
+            "question this script exists for.\n\n" + cuda_diagnostics()
+        )
+    return requested
+
+
 def build_model(seq_len: int, device: str) -> Any:
     from transformers import GPTNeoXConfig, GPTNeoXForCausalLM
 
@@ -79,8 +128,23 @@ def bench(
     dtype: torch.dtype,
 ) -> dict[str, Any]:
     model = build_model(seq_len, device)
+    compiled = False
     if compile_model:
-        model = torch.compile(model)
+        # torch.compile pulls in inductor, which pulls in triton, and a
+        # torch/triton version mismatch raises on *import* -- long before
+        # any kernel is generated. Eager is a valid measurement (it just
+        # understates achievable throughput), so degrade to it and say so
+        # rather than losing the run to a toolchain problem.
+        try:
+            model = torch.compile(model)
+            compiled = True
+        except Exception as exc:  # noqa: BLE001 - any import/backend failure is the same story here
+            print(
+                f"  torch.compile unavailable ({type(exc).__name__}: "
+                f"{str(exc).splitlines()[0][:120]}) -- measuring eager.\n"
+                f"  Eager understates throughput, so treat the result as a floor.",
+                flush=True,
+            )
     opt = torch.optim.AdamW(model.parameters(), lr=1e-4, betas=(0.9, 0.95), weight_decay=0.01)
 
     gen = torch.Generator(device="cpu").manual_seed(0)
@@ -124,7 +188,7 @@ def bench(
         "micro_bs": micro_bs,
         "seq_len": seq_len,
         "dtype": str(dtype).replace("torch.", ""),
-        "compiled": compile_model,
+        "compiled": compiled,
         "timed_steps": steps,
         "elapsed_s": elapsed,
         "s_per_step": elapsed / steps,
@@ -153,12 +217,37 @@ def project(tokens_per_s: float, achieved_flops: float, peak_tflops: float) -> s
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "If torch cannot see the GPU, the usual fix is a CUDA build of torch in a\n"
+            "clean venv (conda-forge's `pytorch` is CPU-only unless asked otherwise, and\n"
+            "a stray `triton` from another channel is what breaks torch.compile):\n"
+            "\n"
+            "    python -m venv .venv && source .venv/bin/activate\n"
+            "    pip install torch --index-url https://download.pytorch.org/whl/cu124\n"
+            "    pip install transformers\n"
+            "\n"
+            "That wheel pins its own matching triton, so install torch from the PyTorch\n"
+            "index *before* anything else that might pull a different one. Verify with\n"
+            "    python scripts/bench_retrain_throughput.py --doctor\n"
+        ),
+    )
+    ap.add_argument(
+        "--doctor",
+        action="store_true",
+        help="report what torch sees of the GPU and exit, running no benchmark",
+    )
     ap.add_argument("--micro-bs", type=int, nargs="+", default=[4, 8])
     ap.add_argument("--seq-len", type=int, default=2048)
     ap.add_argument("--steps", type=int, default=12)
     ap.add_argument("--warmup", type=int, default=3)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    ap.add_argument(
+        "--allow-cpu",
+        action="store_true",
+        help="exercise the code path on CPU; the numbers are not usable for sizing",
+    )
     ap.add_argument("--peak-tflops", type=float, default=DEFAULT_PEAK_TFLOPS)
     ap.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
     ap.add_argument(
@@ -167,11 +256,32 @@ def main() -> None:
     ap.add_argument("--out", default="data/retrain_throughput.json")
     args = ap.parse_args()
 
+    if args.doctor:
+        print(cuda_diagnostics())
+        if torch.cuda.is_available():
+            free, total = torch.cuda.mem_get_info()
+            print(
+                f"\n  OK: {torch.cuda.get_device_name(0)}, "
+                f"{total / 1024**3:.1f} GB total / {free / 1024**3:.1f} GB free"
+            )
+            print(f"  bf16 supported: {torch.cuda.is_bf16_supported()}")
+        raise SystemExit(0 if torch.cuda.is_available() else 1)
+
+    # Silences inductor's TF32 warning and matches what the real run
+    # should use; with bf16 autocast it affects only the fp32 residue.
+    torch.set_float32_matmul_precision("high")
+
     dtype = getattr(torch, args.dtype)
-    if args.device == "cuda":
+    try:
+        device = resolve_device(args.device, args.allow_cpu)
+    except NoAcceleratorError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    args.device = device
+    if device == "cuda":
         print(f"device: {torch.cuda.get_device_name(0)}")
     else:
-        print(f"device: {args.device}  (no CUDA -- numbers are not representative)")
+        print("device: cpu  (--allow-cpu given; numbers are NOT usable for sizing)")
     print(f"dtype: {args.dtype}   seq_len: {args.seq_len}   compile: {args.compile}\n")
 
     results = []
