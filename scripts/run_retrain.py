@@ -114,6 +114,14 @@ def main() -> None:
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
     ap.add_argument("--max-hours", type=float, default=24.0, help="hard wall-clock budget")
+    ap.add_argument(
+        "--compile",
+        action="store_true",
+        help="wrap the training forward in torch.compile (slow first step). "
+        "This is the configuration PROJECT.md \u00a711's VRAM and throughput "
+        "figures were measured in -- inductor fuses the cross-entropy, which "
+        "is the difference between 4.19 GB and OOM at micro-batch 4.",
+    )
     args = ap.parse_args()
 
     if args.device == "cpu":
@@ -188,6 +196,26 @@ def main() -> None:
         buffer.triggered_at = state.get("triggered_at")
         print(f"resumed from {latest} at step {step}")
 
+    # Only the training forward is compiled. `model` stays the plain HF
+    # module everywhere else on purpose: torch.compile wraps it in an
+    # OptimizedModule whose state_dict keys gain an `_orig_mod.` prefix,
+    # which would make this run's checkpoints silently unloadable by an
+    # uncompiled resume and break save_pretrained at the end. The wrapper
+    # shares parameters with `model`, so grads land on the same tensors
+    # and the optimizer, clipping, probing and snapshots are unaffected.
+    fwd_model = model
+    if args.compile:
+        try:
+            fwd_model = torch.compile(model)
+            print("training forward compiled (first step will be slow)")
+        except Exception as exc:  # noqa: BLE001 - any import/backend failure is the same story
+            print(
+                f"torch.compile unavailable ({type(exc).__name__}: "
+                f"{str(exc).splitlines()[0][:120]}) -- running eager.\n"
+                "Eager needs a smaller --micro-bs for the same VRAM; see --help.",
+                flush=True,
+            )
+
     probe_path = run_dir / "probe.jsonl"
     t0 = time.time()
     print(f"\nstarting at step {step}\n", flush=True)
@@ -211,7 +239,36 @@ def main() -> None:
             with torch.autocast(device_type="cuda", dtype=dtype):
                 return m(chunk, labels=chunk).loss
 
-        loss = accumulate_gradients(model, micro, loss_fn)
+        try:
+            loss = accumulate_gradients(fwd_model, micro, loss_fn)
+        except torch.OutOfMemoryError as exc:
+            # The naive HF loss materializes [micro_bs, seq_len, vocab]
+            # logits and then a float() copy of them -- 2.3 GB at
+            # micro_bs 4, seq 2048, and the dominant allocation by far
+            # (the model itself, its grads and Adam's moments total
+            # ~1.2 GB). PROJECT.md §11's 4.19 GB figure was measured
+            # *with* --compile, whose fused CE avoids that copy, so an
+            # eager run at the benchmarked micro_bs does not fit the card
+            # the benchmark was run on. Say which knobs matter rather
+            # than leaving the stock CUDA message to imply the card is
+            # simply too small.
+            eff = cfg.micro_bs * cfg.grad_accum
+            raise torch.OutOfMemoryError(
+                f"OOM in the training forward at micro_bs={cfg.micro_bs}, "
+                f"seq_len={cfg.seq_len}.\n"
+                f"The logits tensor dominates: "
+                f"{cfg.micro_bs * cfg.seq_len * 50304 * 6 / 2**30:.2f} GB "
+                f"(bf16 + its float() copy) before activations.\n"
+                f"Effective batch is micro_bs x grad_accum = {eff} sequences; "
+                f"halving micro_bs and doubling grad_accum holds that fixed "
+                f"and is the equivalence tests/unit/test_retrain.py pins.\n"
+                f"  --compile                        fuses the CE (what "
+                f"PROJECT.md §11's 4.19 GB was measured with)\n"
+                f"  --micro-bs {max(1, cfg.micro_bs // 2)} --grad-accum "
+                f"{cfg.grad_accum * 2}   same effective batch, half the logits\n"
+                f"  PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True   "
+                f"reduces fragmentation\n"
+            ) from exc
         if not torch.isfinite(torch.tensor(loss)):
             raise FloatingPointError(f"non-finite loss ({loss}) at step {step}")
         torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
