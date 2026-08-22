@@ -356,6 +356,41 @@ class SyntheticSource:
         )
 
 
+def _require_stream_deps() -> None:
+    """Fail before `load_dataset` with a message naming the missing package.
+
+    Both of these are real, undeclared-until-now requirements of the
+    `hf-stream` source (the default), and neither announces itself
+    usefully when absent. `datasets` is imported lazily below, so its
+    absence surfaces as a bare ImportError twenty frames into a stack
+    that mentions no package name. `zstandard` is worse: nothing in this
+    repo imports it. fsspec registers the `zstd` codec only when the
+    package is importable, and the Pile mirrors ship `.jsonl.zst`, so
+    without it the failure is `ValueError: Compression type zstd not
+    supported` raised inside fsspec's compression registry -- which reads
+    as a corrupt-dataset or wrong-URL problem rather than a missing
+    dependency, and costs a model download and a tokenizer load first.
+    """
+    missing: list[str] = []
+    try:
+        import datasets  # noqa: F401  # type: ignore[import-untyped]
+    except ImportError:
+        missing.append("datasets")
+    try:
+        import zstandard  # noqa: F401  # type: ignore[import-untyped]
+    except ImportError:
+        missing.append("zstandard")
+    if missing:
+        raise ImportError(
+            f"HFStreamSource needs {', '.join(missing)}, which "
+            f"{'is' if len(missing) == 1 else 'are'} not installed. "
+            f'Install with: pip install -e ".[retrain]" '
+            f"(or: pip install {' '.join(missing)}). "
+            "Use --data-source synthetic only for the smoke path -- a "
+            "uniform-random stream cannot form induction."
+        )
+
+
 class HFStreamSource:
     """Streams and packs a HuggingFace text dataset into fixed-length
     token sequences.
@@ -382,6 +417,7 @@ class HFStreamSource:
         text_field: str = "text",
         seed: int = 0,
     ) -> None:
+        _require_stream_deps()
         from datasets import load_dataset  # type: ignore[import-untyped]
 
         self.tokenizer = tokenizer

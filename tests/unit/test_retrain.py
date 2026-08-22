@@ -438,3 +438,78 @@ def test_probe_raises_rather_than_returning_zero_when_attentions_are_missing() -
         probe_induction(
             NoAttentions(), build_eval_tokens(2, 8, seed=0, d_vocab=50), 8, 1, 0, 2, device="cpu"
         )
+
+
+# --------------------------------------------------------------------------
+# hf-stream dependency preflight
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "absent, expected",
+    [
+        ({"datasets"}, ["datasets"]),
+        ({"zstandard"}, ["zstandard"]),
+        ({"datasets", "zstandard"}, ["datasets", "zstandard"]),
+    ],
+)
+def test_stream_preflight_names_every_missing_package(
+    absent: set, expected: list, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Discrimination guard on the message, not just on the raise.
+
+    The bug this replaces cost a real run: `zstandard` missing surfaced as
+    `ValueError: Compression type zstd not supported` from inside fsspec,
+    after the checkpoint download and tokenizer load, naming no package.
+    A preflight that raised a generic error would pass a bare
+    `pytest.raises` while being just as useless, so what is pinned here is
+    that each absent package is named -- and that a partial install names
+    only what is actually missing, since "install both" sent someone to
+    reinstall a package they already had.
+    """
+    import builtins
+
+    from indbw.retrain import _require_stream_deps
+
+    real_import = builtins.__import__
+
+    def fake_import(name: str, *args, **kwargs):
+        if name in absent:
+            raise ImportError(f"No module named {name!r}")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    with pytest.raises(ImportError) as exc:
+        _require_stream_deps()
+    msg = str(exc.value)
+    for pkg in expected:
+        assert pkg in msg, f"{pkg} missing but not named in the error"
+    for pkg in {"datasets", "zstandard"} - absent:
+        assert pkg not in msg, f"{pkg} is installed but the error tells the user to install it"
+    assert "[retrain]" in msg, "error does not name the extra that fixes it"
+
+
+def test_stream_preflight_is_silent_when_both_are_importable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other half of the discrimination pair: a preflight that always
+    raised would pass every assertion above."""
+    import builtins
+    import sys
+    import types
+
+    from indbw.retrain import _require_stream_deps
+
+    for name in ("datasets", "zstandard"):
+        if name not in sys.modules:
+            monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    real_import = builtins.__import__
+
+    def fake_import(name: str, *args, **kwargs):
+        if name in ("datasets", "zstandard"):
+            return sys.modules[name]
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    _require_stream_deps()  # must not raise

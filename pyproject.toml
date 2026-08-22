@@ -23,6 +23,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The `hf-stream` data source -- run_retrain.py's default -- needs both of
+# these, and neither is importable from this package, so nothing in the
+# core install or the test suite catches their absence. zstandard is not
+# imported by any code here at all: fsspec registers its `zstd` codec only
+# when the package is present, and the Pile mirror ships `.jsonl.zst`, so
+# without it a real run dies inside fsspec after downloading the model.
+retrain = [
+    "datasets",
+    "zstandard",
+]
 dev = [
     "pytest",
     "hypothesis",
