@@ -1,0 +1,27 @@
+{
+  "betas": [
+    0.9,
+    0.95
+  ],
+  "buffer_steps": 24,
+  "capture_steps": 60,
+  "data_source": "hf-stream",
+  "dtype": "bfloat16",
+  "eps": 1e-08,
+  "from_step": 512,
+  "grad_accum": 256,
+  "grad_clip": 1.0,
+  "micro_bs": 4,
+  "onset_pms": 0.05,
+  "out_dir": "data/retrain",
+  "probe_T": 128,
+  "probe_every": 4,
+  "probe_head": 6,
+  "probe_layer": 3,
+  "probe_n_eval": 128,
+  "save_every": 25,
+  "seed": 0,
+  "seq_len": 2048,
+  "to_step": 2000,
+  "weight_decay": 0.01
+}
