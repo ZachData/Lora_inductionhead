@@ -67,6 +67,22 @@
     {"range": [1528, 1860], "n": 84, "keep": true, "role": "final-session capture; retained because provenance.json references it"}
   ],
 
+  "content_verification": {
+    "date": "2026-09-01",
+    "why": "Everything else in this file is inferred from filenames, file sizes and probe.jsonl. This block is the only claim here based on opening the tensors.",
+    "checkpoints_examined": [528, 616, 620, 852],
+    "shape_check": "76 tensors, 70,426,624 parameters each -- consistent with pythia-70m full model state.",
+    "distinctness": "All 76 tensors differ between all 6 pairs; zero byte-identical tensors. This rules out the failure mode where RollingCheckpointBuffer.offer()'s .clone() fails to detach a live state_dict and every file in a session holds the same weights.",
+    "trajectory_consistency": {
+      "616->620 (gap 4)": {"frobenius": 2.9122, "relative": 0.010575},
+      "528->616 (gap 88)": {"frobenius": 35.2981, "relative": 0.132085},
+      "528->852 (gap 324)": {"frobenius": 103.4871, "relative": 0.387246},
+      "reading": "Delta grows monotonically with step gap while per-step drift falls (0.728 -> 0.401 -> 0.319), i.e. cumulative distance is sublinear in step count because consecutive updates partially cancel. Consistent with a real optimizer trajectory and with the step labels meaning what they say."
+    },
+    "not_checked": "Only 4 of the 82 bracket checkpoints were opened, and steps 856/860 were not among them -- the contamination finding above still rests entirely on probe.jsonl train_loss, not on weights.",
+    "incidental": "No tensor is frozen across the four: this run trained every parameter including LayerNorm and embeddings. Expected for this harness, which reproduces natural training A->B to observe onset. It is NOT the M1-M8 LoRA protocol, whose freezing rule (CLAUDE.md) does not apply to and was not violated by this run."
+  },
+
   "s3_location": "s3://research-vm-shared-176048535722/retrain/cb25e3f6c2185c1e/",
   "generated_by": "manual reconciliation of S3 object listing against provenance.json and probe.jsonl",
   "generated_on": "2026-09-01",
