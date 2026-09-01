@@ -14,6 +14,19 @@ Unblock the M1–M8 rank sweeps, which are stalled on G3's failed positive contr
 ## Next step
 **Attempted this session; failed on memory, not logic.** `scripts/diagnose_g3_reachability.py` was run — HuggingFace access works fine now (checkpoint A's 76 tensors downloaded and loaded), but the process was OOM-killed loading checkpoint B alongside it (confirmed via `journalctl -k`: anon-rss 1.13–1.26 GB vs. this box's 1.8 GB total — the same box and the same magnitude as the earlier mypy OOM in §11). See the new REVIEW.md 2026-09-01 entry for the three untried fixes (bigger instance / load-then-free instead of holding both models / lower-precision dtype) and why none was picked without sign-off. **This is now the actual next step**: get a human call on which fix, then re-run. `data/g3_reachability_diag.jsonl` does not exist — nothing was produced.
 
+## Side thread this session: instance sizing + spot workers
+- User asked to upgrade this orchestrator box by one step (t4g.small → t4g.medium) and to prefer spot for sweep workers.
+- **This box cannot resize itself.** Confirmed via dry-run: its role (`research-vm-ssm-role`) allows `ec2:StopInstances` but denies `ec2:ModifyInstanceAttribute`, `ec2:StartInstances`, `ec2:RequestSpotInstances`. Stopping it would also kill this session with no way to restart it from in here. Instance is `i-017b99c1cdafa4a92`, us-east-2. Commands for the user to run from wherever holds fuller credentials:
+  ```
+  aws ec2 stop-instances --instance-ids i-017b99c1cdafa4a92 --region us-east-2
+  aws ec2 wait instance-stopped --instance-ids i-017b99c1cdafa4a92 --region us-east-2
+  aws ec2 modify-instance-attribute --instance-id i-017b99c1cdafa4a92 --instance-type t4g.medium --region us-east-2
+  aws ec2 start-instances --instance-ids i-017b99c1cdafa4a92 --region us-east-2
+  ```
+  Not yet run — waiting on the user (or whoever has those creds) to do it.
+- **Sweep workers now request spot** — implemented and pushed. `infra/wrapper.sh`'s `run-instances` call now passes one-time spot market options; the wait-loop also verifies each worker's `git log`-matched result commit before treating the sweep as done, since a spot reclaim terminates the instance the same way a successful push does (see REVIEW.md 2026-09-01 entry for the full reasoning, including why persistent+stop-on-interruption was considered and rejected). Untested against a real sweep/reclaim.
+- Noted but not touched: `infra/rvm.env`'s `RVM_INSTANCE_TYPE` is dead config — neither script reads it; the worker instance type actually comes from the `research-vm-worker-template` launch template (t4g.small). Human call on whether to wire it up or delete it.
+
 ## Open questions / blockers
 - Which fix for the reachability-graft OOM (REVIEW.md, this date) — bigger instance, partial-tensor loading, or lower precision. No `rvm` CLI is available from this box to self-serve a bigger instance.
 - §11's first open question ("induction objective ... settle before G3") looks stale — G3 has already run. Flagged to the user, not yet resolved; worth checking whether PROJECT.md needs a §10 correction.

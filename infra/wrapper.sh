@@ -67,9 +67,20 @@ if [ -f "NEEDS_WORKERS" ]; then
   for WID in $WORKER_IDS; do
     sed -e "s/__WORKER_ID__/${WID}/" -e "s/__BRANCH__/${BRANCH}/" \
       "$WORKER_BOOTSTRAP_TEMPLATE" > "/tmp/worker-${WID}-userdata.sh"
+    # One-time spot request: cheaper than on-demand, and a reclaim
+    # terminates the instance (AWS only allows stop/hibernate-on-
+    # interruption for *persistent* requests, which can auto-restart
+    # later from a stopped state -- our worker only ever runs its work
+    # from --user-data on first boot, so an auto-restarted persistent
+    # instance would come back up idle rather than resuming, a zombie
+    # that costs money and does nothing). Terminate-on-interruption
+    # means a reclaimed worker looks identical, at the instance-state
+    # level, to one that finished and pushed successfully -- see the
+    # git-log check after this loop, which is the actual safety net.
     WORKER_INSTANCE_ID=$(aws ec2 run-instances \
       --region "${REGION}" \
       --launch-template LaunchTemplateName="${WORKER_TEMPLATE}" \
+      --instance-market-options 'MarketType=spot,SpotOptions={SpotInstanceType=one-time,InstanceInterruptionBehavior=terminate}' \
       --user-data "file:///tmp/worker-${WID}-userdata.sh" \
       --tag-specifications "ResourceType=instance,Tags=[{Key=Project,Value=research-vm},{Key=Role,Value=worker},{Key=WorkerId,Value=${WID}}]" \
       --query 'Instances[0].InstanceId' --output text)
@@ -97,6 +108,29 @@ if [ -f "NEEDS_WORKERS" ]; then
   done
 
   git pull --ff-only
+
+  # A worker's instance state alone cannot be trusted as a completion
+  # signal now that workers are spot: on-demand, only two things ever
+  # terminate a worker (a successful push, or a spot reclaim never
+  # happens) -- so "terminated" implied "pushed." A spot reclaim also
+  # terminates the instance, with no push, indistinguishable from
+  # success at the instance-state level. Check the actual evidence
+  # instead: every worker's push carries the commit message
+  # worker-bootstrap.sh always uses, so its absence means that worker's
+  # result never arrived, regardless of why its instance is gone.
+  MISSING_WORKERS=()
+  for WID in $WORKER_IDS; do
+    if ! git log --oneline --grep="^Worker ${WID} result$" | grep -q .; then
+      MISSING_WORKERS+=("${WID}")
+    fi
+  done
+  if [ "${#MISSING_WORKERS[@]}" -gt 0 ]; then
+    echo "Worker(s) ${MISSING_WORKERS[*]} have no result commit -- terminated"
+    echo "(likely a spot reclaim) without pushing. Not proceeding; re-launch"
+    echo "just these worker IDs once capacity is available."
+    exit 1
+  fi
+
   rm -f NEEDS_WORKERS
 
   # --- Re-invoke Claude Code to close out the row using worker results ---
