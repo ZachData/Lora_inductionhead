@@ -11,10 +11,11 @@ Unblock the M1–M8 rank sweeps, which are stalled on G3's failed positive contr
 - Verified checkpoint contents for the separate `data/retrain/` onset-bracket work (spot check of 4/82 checkpoints, all differ, delta norms scale sanely with step gap) — see REVIEW.md 2026-09-01 entries. That thread has two still-open human-call items (buffer eviction design after resume; whether a 58-checkpoint post-onset window is adequate for D1) but is lower priority since D1 is itself blocked upstream on M1/M2.
 - **This session (2026-09-01):** confirmed HuggingFace access now works from this box (`curl huggingface.co` → 200), removing the blocker on the reachability graft. Confirmed `/home/ubuntu/venv` has the project deps installed (Python 3.12 — fine for this script since it writes no results record and doesn't touch `metric_hash.json`/mypy, the two things pinned to 3.11). User explicitly approved running the graft next.
 
-## Next step (in progress / about to run)
-Run `scripts/diagnose_g3_reachability.py` (default cells) from `/home/ubuntu/Lora_inductionhead` with `source /home/ubuntu/venv/bin/activate` first. Per the script's own docstring: diagnostic only, no protocol/status-board change — reading the result and deciding what it means is a human call (CLAUDE.md falsification discipline). REVIEW.md's 2026-08-19/08-22 entries are the context for why this is the discriminating experiment.
+## Next step
+**Attempted this session; failed on memory, not logic.** `scripts/diagnose_g3_reachability.py` was run — HuggingFace access works fine now (checkpoint A's 76 tensors downloaded and loaded), but the process was OOM-killed loading checkpoint B alongside it (confirmed via `journalctl -k`: anon-rss 1.13–1.26 GB vs. this box's 1.8 GB total — the same box and the same magnitude as the earlier mypy OOM in §11). See the new REVIEW.md 2026-09-01 entry for the three untried fixes (bigger instance / load-then-free instead of holding both models / lower-precision dtype) and why none was picked without sign-off. **This is now the actual next step**: get a human call on which fix, then re-run. `data/g3_reachability_diag.jsonl` does not exist — nothing was produced.
 
 ## Open questions / blockers
+- Which fix for the reachability-graft OOM (REVIEW.md, this date) — bigger instance, partial-tensor loading, or lower precision. No `rvm` CLI is available from this box to self-serve a bigger instance.
 - §11's first open question ("induction objective ... settle before G3") looks stale — G3 has already run. Flagged to the user, not yet resolved; worth checking whether PROJECT.md needs a §10 correction.
 - The two retrain-harness human calls in REVIEW.md's 2026-09-01 entries (buffer eviction design; bracket adequacy for D1) — not addressed this session.
 
