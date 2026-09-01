@@ -1,0 +1,74 @@
+{
+  "_comment": [
+    "Corrects the reader's interpretation of provenance.json for this run.",
+    "provenance.json is deliberately NOT modified: it is a provenance record and",
+    "records what the process actually emitted. This file says what that output means.",
+    "Read THIS file, not provenance.json's `retained_checkpoints`, to locate the",
+    "pre/post-onset checkpoint bracket."
+  ],
+  "run_id": "cb25e3f6c2185c1e",
+  "onset_step": 620,
+  "onset_criterion": "first probe step with pms >= onset_pms (0.05); observed pms = 0.0514",
+
+  "true_bracket": {
+    "first_step": 528,
+    "last_step": 852,
+    "stride": 4,
+    "n_checkpoints": 82,
+    "pre_onset": {"first_step": 528, "last_step": 620, "n": 24},
+    "post_onset": {"first_step": 624, "last_step": 852, "n": 58},
+    "matches_config": "buffer_steps=24 pre + capture_steps=60 post, at probe_every=4",
+    "note": "The design intended 84 checkpoints ending at 860. The last two (856, 860) are excluded -- see contaminated_checkpoints below."
+  },
+
+  "contaminated_checkpoints": {
+    "steps": [856, 860],
+    "why": [
+      "Session 2 resumed from latest.pt at step 852 and re-ran steps 853-868.",
+      "Because _retained was empty after the resume, buffer.offer() wrote again at",
+      "steps 856 and 860, overwriting session 1's files at those paths.",
+      "The re-run is NOT the same trajectory: probe.jsonl records different train_loss",
+      "at identical steps across the two passes (step 852: 3.6353 vs 3.8482;",
+      "step 856: 3.6944 vs 3.7898), so the hf-stream data position was not restored",
+      "on resume and the model saw different batches.",
+      "Weight divergence is small (pms differs by <= 0.007) but real."
+    ],
+    "step_852_is_clean": "Step 852 is the resume point, loaded verbatim from latest.pt. Its pms wobble of 0.0014 across passes is eval sampling noise (probe_n_eval=128) on identical weights, not divergence.",
+    "recommendation": "Use 528-852 for any pre/post-onset delta. Treat 856 and 860 as belonging to the post-resume trajectory."
+  },
+
+  "reproducibility_caveat": "This run is not reproducible across a resume. The seed (0) is recorded and applied at process start, but the streaming-data position is not checkpointed, so resuming replays different batches from the same weights.",
+
+  "provenance_retained_checkpoints_is_misleading": {
+    "listed_range": [1528, 1860],
+    "why": [
+      "provenance.json's `retained_checkpoints` is buffer.retained_steps() at process exit.",
+      "The run was resumed twice, and scripts/run_retrain.py's resume path restores",
+      "buffer.triggered_at from latest.pt but never restores buffer._retained.",
+      "Each resume therefore began with an empty _retained list, so the recorded list",
+      "describes only the final session (steps 1528-2000), not the onset capture."
+    ],
+    "consequence": "Steps 1528-1860 sit ~900 steps after onset and bracket nothing. Using them as the onset delta measures an arbitrary mid-training window."
+  },
+
+  "resume_history": {
+    "evidence": "backwards step transitions in probe.jsonl",
+    "sessions": [
+      {"ran_steps": [516, 868], "wrote_checkpoints": [528, 860]},
+      {"ran_steps": [852, 1540], "wrote_checkpoints": [864, 1184]},
+      {"ran_steps": [1528, 2000], "wrote_checkpoints": [1528, 1860]}
+    ],
+    "note": "Session 1 executed the intended design correctly and produced the 84-checkpoint bracket above. Sessions 2 and 3 wrote additional checkpoints only because the reset _retained list disabled both eviction and the capture-exhausted stop."
+  },
+
+  "checkpoint_blocks_on_disk": [
+    {"range": [528, 860], "n": 84, "keep": true, "role": "onset capture; the scientific payload is the 528-852 subset (856 and 860 were overwritten post-resume)"},
+    {"range": [864, 1184], "n": 81, "keep": false, "role": "resume-bug spillover, mid-training, no design meaning"},
+    {"range": [1528, 1860], "n": 84, "keep": true, "role": "final-session capture; retained because provenance.json references it"}
+  ],
+
+  "s3_location": "s3://research-vm-shared-176048535722/retrain/cb25e3f6c2185c1e/",
+  "generated_by": "manual reconciliation of S3 object listing against provenance.json and probe.jsonl",
+  "generated_on": "2026-09-01",
+  "against_git_sha": "5efe0f3753a79c3f2e16022c83635f97c17d9142"
+}
