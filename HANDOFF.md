@@ -3,7 +3,7 @@
 _Updated by Claude at natural checkpoints — see `~/.claude/CLAUDE.md` for the convention. Read this first when resuming in this repo._
 
 ## Current goal
-Unblock the M1–M8 rank sweeps, which are stalled on G3's failed positive control (`PROJECT.md` status board). Six optimization-axis diagnostics have already come back negative sharing an unexplained plateau (`R ≈ 0.01`). The remaining, undone diagnostic is the reachability graft.
+Unblock the M1–M8 rank sweeps, stalled on G3's failed positive control (`PROJECT.md` status board). **All seven diagnostics are now done.** Six optimization-axis ones came back negative on an unexplained `R ≈ 0.01` plateau; the seventh — the reachability graft, run 2026-09-03 — shows the plateau is not about optimization at all: checkpoint B's own weights, grafted into A, do not reach the criterion either. **The blocker is now an interpretive decision by a human, not a missing measurement.** See "Next step".
 
 ## What's been done (most recent last)
 - Confirmed (2026-09-01, prior session) that six G3 diagnostics — lr, rank, frozen-W_K, head choice, full fine-tune, step-budget accounting — all disfavor their respective hypotheses; none explain the plateau.
@@ -14,10 +14,23 @@ Unblock the M1–M8 rank sweeps, which are stalled on G3's failed positive contr
 
 ## This session
 
-### The reachability graft is running on a worker
-The OOM was a statement about the orchestrator (`t4g.small`, 1.8 GB), not about the code. Launched it on a **`t4g.medium` (4 GB) on-demand worker**, `i-0a399eeb8ed09de7a`, worker id `g3reach`, running `python scripts/diagnose_g3_reachability.py` off `main` at `e6acb6d`. It writes `data/g3_reachability_diag.jsonl` and pushes a `Worker g3reach result` commit. Non-numeric worker id on purpose: `wrapper.sh` greps *all* history for `^Worker <id> result$`, so a stray `Worker 0 result` would make a future sweep believe worker 0 had already finished.
+### The reachability graft RAN. It is no longer blocked.
+The OOM was a statement about the orchestrator (`t4g.small`, 1.8 GB), not about the code. Ran it on a `t4g.medium` worker (`i-0a399eeb8ed09de7a`, id `g3reach`) off `main` at `e6acb6d`; 8/8 cells in ~11 min, pushed as `2e03a0c`, results in `data/g3_reachability_diag.jsonl`.
 
-**If that commit is not on `main`, the run did not land** — check the instance, don't assume.
+| cell | R | PMS | | cell | R | PMS |
+|---|---|---|---|---|---|---|
+| `base_a` | −0.0002 | 0.0055 | | `head` | 0.0046 | 0.0212 |
+| `qk_q` | **−0.0006** | 0.0092 | | `layer_host` | 0.0077 | 0.0212 |
+| `qk_qk` | 0.0005 | 0.0212 | | `full` | **1.0004** | 0.9641 |
+| `ov` | 0.0023 | 0.0055 | | `base_b` | 1.0004 | 0.9641 |
+
+Controls hold (`full` ≈ 1, `base_a` ≈ 0), plus two consistency checks nothing asserts: the `ov` graft leaves PMS exactly at `base_a` (OV cannot change attention patterns), and `qk_qk` moves PMS further than `qk_q` alone.
+
+**`qk_q` = −0.0006 is the result.** It grafts B's real `W_Q` for head (3,6) — the exact tensor the QK arm trains — so it upper-bounds what *any* ΔW_Q at any rank, lr, or step budget can reach from A. It moves nothing. G3's plateau is not an optimization failure in the QK arm.
+
+It also overshoots the question: the whole head gives 0.0046 and the whole host block 0.0077 — the same ~0.01 floor — while `full` gives 1.0004. **The structure that makes B's induction head function is not in the head, nor in its block.** Nothing between `layer_host` and `full` was measured, so the gap is unlocalized.
+
+**No verdict has been written and none should be written casually.** The G3 row is untouched, no §10 entry, no §6 edit — interpreting this is a human call (CLAUDE.md §9), and "distributed circuit" vs. "A and B are not in the same basin" vs. "LayerNorm/embedding co-adaptation" have very different consequences for whether M1–M8 is well-posed. See the REVIEW.md 2026-09-03 entry for the four things that result cannot resolve, including a 0.04% drift between the hardcoded `ICL_B` constant and its re-measurement, which if real biases every prior R.
 
 ### Fixed: the per-worker `cmd` override was documented but never implemented
 `infra/prompt.md` has told the agent for several commits that a manifest entry "may also carry `cmd` to override the default worker command." Nothing implemented it — `worker-bootstrap.sh` hardcoded `g0_sweep.py`, so a worker could only ever run a checkpoint-grid sweep. That is a large part of why memory-bound one-off jobs kept being treated as blocked-on-a-human instead of being sent to a worker. Now implemented (`e6acb6d`), along with a per-worker `instance_type` override, since the launch template is `t4g.small` in every version — i.e. a default worker would OOM exactly as the orchestrator did. `worker-bootstrap.sh` also now allocates a 3 GB swapfile, which `PROJECT.md` §11 recommends in three separate places.
@@ -30,8 +43,11 @@ Commit `ca3e20d` moved workers to spot in *two* places — `wrapper.sh`'s flag a
 Also worth knowing: **`run-instances --dry-run` reports success for the spot call that then fails.** Dry-run does not check service-linked-role creation. A launch pre-flight built on `--dry-run` alone will greenlight a path that cannot work.
 
 ## Next step
-1. Confirm the `Worker g3reach result` commit landed and read `data/g3_reachability_diag.jsonl`. The discriminating cell is `qk_q`: it is an upper bound on what *any* ΔW_Q can reach from A, so if it does not move R, no rank and no step budget can, and G3's plateau is an existence problem rather than an optimization one. `full` must give R == 1 by construction — if it does not, distrust the whole run. Interpreting the result is a human call (CLAUDE.md falsification discipline); do not write a status-board verdict off it unassisted.
-2. Human call needed on spot: either `aws iam create-service-linked-role --aws-service-name spot.amazonaws.com` (one IAM call, forbidden to me), or revert `ca3e20d`. Leaving `main` with a sweep path that cannot launch is the one option that should not persist.
+**A human needs to interpret the graft result and decide what it means for M1-M8.** Seven diagnostics are now done and the phase cannot move without that call. The question is no longer "why won't the QK arm train?" but "given that B's own weights do not transplant, is the M1-M8 protocol asking a well-posed question?" Everything downstream (M1-M8, and D1 beneath them) waits on it.
+
+Also needed from a human, both one-time IAM calls I am not permitted to make (see "Found: spot launches cannot succeed" above):
+1. `aws iam create-service-linked-role --aws-service-name spot.amazonaws.com` - makes spot work at all. Until then every sweep through `wrapper.sh` fails at the first `run-instances`.
+2. Optionally, a `Deny` on `ec2:RunInstances` when `ec2:InstanceMarketType != spot`, and when `ec2:InstanceType` is not `t4g.*`. That enforces spot-only and no-GPU at the layer that cannot be routed around - the launch template only *defaults* to spot, and I demonstrated it can be bypassed by pinning an older version.
 
 ## Open questions / blockers
 - The spot SLR decision above (REVIEW.md 2026-09-03).
