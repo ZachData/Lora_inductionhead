@@ -65,8 +65,38 @@ if [ -f "NEEDS_WORKERS" ]; then
   INSTANCE_IDS=()
 
   for WID in $WORKER_IDS; do
-    sed -e "s/__WORKER_ID__/${WID}/" -e "s/__BRANCH__/${BRANCH}/" \
-      "$WORKER_BOOTSTRAP_TEMPLATE" > "/tmp/worker-${WID}-userdata.sh"
+    # Per-worker "cmd" and "instance_type" overrides, both optional (see
+    # infra/prompt.md). Substituted in Python, not sed: a command contains
+    # slashes ("python scripts/foo.py"), which would need escaping in a
+    # sed s/// and silently mangles the userdata if it isn't.
+    WORKER_CMD="$(python3 -c "
+import json,sys
+w=[x for x in json.load(open('sweep_manifest.json'))['workers'] if str(x['worker_id'])==sys.argv[1]][0]
+print(w.get('cmd','python scripts/g0_sweep.py --manifest sweep_manifest.json --worker-id '+str(w['worker_id'])))
+" "${WID}")"
+    WORKER_TYPE="$(python3 -c "
+import json,sys
+w=[x for x in json.load(open('sweep_manifest.json'))['workers'] if str(x['worker_id'])==sys.argv[1]][0]
+print(w.get('instance_type',''))
+" "${WID}")"
+    python3 -c "
+import sys
+src=open(sys.argv[1]).read()
+for k,v in (('__WORKER_ID__',sys.argv[2]),('__BRANCH__',sys.argv[3]),('__WORKER_CMD__',sys.argv[4])):
+    src=src.replace(k,v)
+open(sys.argv[5],'w').write(src)
+" "$WORKER_BOOTSTRAP_TEMPLATE" "${WID}" "${BRANCH}" "${WORKER_CMD}" "/tmp/worker-${WID}-userdata.sh"
+
+    # The launch template is t4g.small for every version. A cell that needs
+    # more memory than that (two checkpoints live at once, say) must say so
+    # in the manifest, or it will be OOM-killed exactly as it would be on
+    # the orchestrator. Empty -> inherit the template's type.
+    TYPE_ARG=()
+    if [ -n "${WORKER_TYPE}" ]; then
+      TYPE_ARG=(--instance-type "${WORKER_TYPE}")
+      echo "Worker ${WID}: overriding instance type -> ${WORKER_TYPE}"
+    fi
+    echo "Worker ${WID}: cmd = ${WORKER_CMD}"
     # One-time spot request: cheaper than on-demand, and a reclaim
     # terminates the instance (AWS only allows stop/hibernate-on-
     # interruption for *persistent* requests, which can auto-restart
@@ -80,6 +110,7 @@ if [ -f "NEEDS_WORKERS" ]; then
     WORKER_INSTANCE_ID=$(aws ec2 run-instances \
       --region "${REGION}" \
       --launch-template LaunchTemplateName="${WORKER_TEMPLATE}" \
+      "${TYPE_ARG[@]}" \
       --instance-market-options 'MarketType=spot,SpotOptions={SpotInstanceType=one-time,InstanceInterruptionBehavior=terminate}' \
       --user-data "file:///tmp/worker-${WID}-userdata.sh" \
       --tag-specifications "ResourceType=instance,Tags=[{Key=Project,Value=research-vm},{Key=Role,Value=worker},{Key=WorkerId,Value=${WID}}]" \

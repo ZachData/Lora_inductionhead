@@ -63,18 +63,31 @@ apt install -y at >/dev/null 2>&1 || true
 systemctl enable --now atd
 HARD_CAP_JOB=$(echo "aws ec2 stop-instances --region ${REGION} --instance-ids ${INSTANCE_ID}" | at now + "${HOURS}" hours 2>&1 | grep -o 'job [0-9]*' | awk '{print $2}')
 
+# --- swap: a checkpoint load sits right at a t4g.small's ceiling ---
+# PROJECT.md §11 records this twice (integration test 2026-08-12, G1 forward
+# pass): torch+transformers imports alone cost ~700MB, and the HF->TL weight
+# conversion peaks well above what 1.8GB with no swap can absorb, so the
+# process is OOM-killed with no error attributable to the code. Swap turns
+# that hard kill into slow-but-correct. Idempotent, and a no-op on an
+# instance sized large enough to never touch it.
+if [ ! -f /swapfile ]; then
+  fallocate -l 3G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile || true
+fi
+
 # --- run this worker's assigned cell ---
-# G0 (2026-08-12): points at scripts/g0_sweep.py's manifest mode (checkpoint-grid
-# sweep, not a train.py rank/lr/seed cell — train.py doesn't exist yet). Update
-# this line to `python -m indbw.train --manifest sweep_manifest.json --worker-id
-# ${WORKER_ID}` once a train.py-shaped sweep (M1-M8) is the one being parallelized.
+# The command is substituted by wrapper.sh from the manifest entry's "cmd"
+# key, falling back to the g0_sweep default when the entry doesn't set one
+# (infra/prompt.md documents that override; before this it was documented
+# but not implemented, so every worker ran g0_sweep.py no matter what the
+# manifest said — which silently made workers unusable for anything except
+# a checkpoint-grid sweep).
 #
 # The `pip install` reconciles the AMI-baked venv against whatever this
 # commit's pyproject.toml actually declares — the venv is a snapshot
 # from image-build time, and without this a dependency fix merged to
 # the repo (e.g. a version pin) silently never reaches a worker
 # launched from an older AMI.
-su - "${TARGET_USER}" -c "cd ${REPO_DIR} && source /home/ubuntu/venv/bin/activate && pip install -e '.[dev]' && export G0_S3_BUCKET='${S3_BUCKET}' && python scripts/g0_sweep.py --manifest sweep_manifest.json --worker-id ${WORKER_ID}"
+su - "${TARGET_USER}" -c "cd ${REPO_DIR} && source /home/ubuntu/venv/bin/activate && pip install -e '.[dev]' && export G0_S3_BUCKET='${S3_BUCKET}' && __WORKER_CMD__"
 
 # --- push result, retrying through concurrent-worker collisions ---
 cd "${REPO_DIR}"

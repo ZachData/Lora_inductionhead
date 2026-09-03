@@ -190,6 +190,34 @@ No auto-relaunch. Whether to start the next instance is a manual decision made o
 
 ---
 
+## Workers
+
+**Launching workers is allowed and expected. It is the intended answer whenever work does not fit on the orchestrator — reach for it before concluding you are blocked, and before handing the task back to a human.**
+
+The orchestrator is a `t4g.small`: 2 vCPU, **1.8 GB RAM, no swap**. torch + transformers imports alone cost ~700 MB, so *one* checkpoint load sits at its ceiling and two is over it (`PROJECT.md` §11 records this three times — the integration test, the G1 forward pass, mypy). An OOM kill on this box is a statement about the box, not about the code. The correct response is a bigger worker, not a code rewrite, not a precision downgrade, and not "please run this on your own machine."
+
+To run something on a worker, put it in `sweep_manifest.json` and let `infra/wrapper.sh` launch it. Each worker entry takes two optional keys beyond its cell parameters:
+
+```json
+{"worker_id": 0, "cmd": "python scripts/foo.py --bar", "instance_type": "t4g.medium"}
+```
+
+- `cmd` — what the worker runs. Defaults to the `g0_sweep.py` manifest command. Anything that writes its output into the repo works; the worker commits and pushes it as `Worker <id> result`, which is also the string `wrapper.sh` greps for to confirm the work actually landed.
+- `instance_type` — overrides the launch template, which is `t4g.small` for every version. **A cell needing more memory than the orchestrator has must set this**, or it gets OOM-killed exactly as it would have on the orchestrator.
+
+### Cost discipline
+
+- **Prefer the cheap `t4g` CPU family.** Size up one step at a time — `t4g.medium` (4 GB) then `t4g.large` (8 GB) — rather than jumping to the largest thing that would obviously work.
+- **Avoid GPU instances.** They are available and they are very expensive. Nothing in the forward-only probe path needs one: these are 70M-parameter models, and a graft or a probe sweep is a handful of forward passes. Use a GPU only for real training throughput, and only with explicit human sign-off in `PROJECT.md` §10.
+- Workers are one-time spot, so a reclaim terminates them mid-run. That is fine and cheap; the `git log` check in `wrapper.sh` is what distinguishes a reclaim from a success, so never treat "instance is gone" as "work is done."
+- Set the per-worker hard cap (`HOURS` in `worker-bootstrap.sh`) to something appropriate. A worker whose command dies leaves the instance idle until that cap stops it — bound the waste.
+
+### What is still not yours to do
+
+Provisioning outside the worker pattern. Do not resize, stop, or start the orchestrator (the role denies it, and stopping it kills the session with no way back in), do not create or modify IAM roles or policies, and do not touch resources that are not tagged `Project=research-vm`.
+
+---
+
 ## Working on a status-board row
 
 1. Read the row and the `PROJECT.md` section it references.
@@ -223,7 +251,7 @@ These are not style preferences. See `PROJECT.md` §9.
 - Do not store merged models. LoRA factors only.
 - Do not sweep rank without sweeping lr independently per rank, or holding $\alpha/r$ fixed.
 - Do not use 410m for training. Forward-only probes at most.
-- Worker-instance lifecycle is allowed: launching/terminating workers for a sweep row (the `infra/wrapper.sh` + `infra/worker-bootstrap.sh` pattern) and self-stopping via `infra/teardown.sh`. Stay within this project's tagged resources (`Project=research-vm`); do not touch untagged or other projects' AWS resources, and do not create or modify IAM roles/policies.
+- Do not provision AWS outside the worker pattern — no resizing/stopping/starting the orchestrator, no IAM changes, nothing untagged. **Launching workers is explicitly allowed and is the expected way to run anything the orchestrator cannot hold; see "Workers" above before deciding you are blocked on compute.**
 - Do not reintroduce LLC, SGLD, crosscoders, sparsity readouts, or the Markov substrate. All dropped deliberately (`PROJECT.md` §10).
 - Do not treat `sltdiff-readme.md` or any pre-2026-08 spec as authoritative. Superseded.
 
