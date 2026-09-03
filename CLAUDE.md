@@ -203,18 +203,40 @@ To run something on a worker, put it in `sweep_manifest.json` and let `infra/wra
 ```
 
 - `cmd` — what the worker runs. Defaults to the `g0_sweep.py` manifest command. Anything that writes its output into the repo works; the worker commits and pushes it as `Worker <id> result`, which is also the string `wrapper.sh` greps for to confirm the work actually landed.
-- `instance_type` — overrides the launch template, which is `t4g.small` for every version. **A cell needing more memory than the orchestrator has must set this**, or it gets OOM-killed exactly as it would have on the orchestrator.
+- `instance_type` — overrides the launch template, which is `t4g.small` for every version. Leave it unset unless a cell has *demonstrably* OOM'd at the size below; see "Smallest thing that works". Only memory justifies raising it — a cell that OOMs on the orchestrator will OOM identically on a default worker, because they are the same size.
 
-### Cost discipline
+### Spot only
 
-- **Prefer the cheap `t4g` CPU family.** Size up one step at a time — `t4g.medium` (4 GB) then `t4g.large` (8 GB) — rather than jumping to the largest thing that would obviously work.
-- **Avoid GPU instances.** They are available and they are very expensive. Nothing in the forward-only probe path needs one: these are 70M-parameter models, and a graft or a probe sweep is a handful of forward passes. Use a GPU only for real training throughput, and only with explicit human sign-off in `PROJECT.md` §10.
-- Workers are one-time spot, so a reclaim terminates them mid-run. That is fine and cheap; the `git log` check in `wrapper.sh` is what distinguishes a reclaim from a success, so never treat "instance is gone" as "work is done."
-- Set the per-worker hard cap (`HOURS` in `worker-bootstrap.sh`) to something appropriate. A worker whose command dies leaves the instance idle until that cap stops it — bound the waste.
+**Every worker is a one-time spot instance. Never launch on-demand.** Not a preference — spot is a large fraction of the cost of this project, and an on-demand worker is several times the price for identical output.
+
+There is no legitimate reason to launch on-demand, so treat any of these as a bug to report rather than a workaround to take:
+
+- Pinning an older launch-template version. `research-vm-worker-template` v4 carries the spot options and is the default, but **v1–v3 predate the spot change and carry none** — pinning `Version=3` silently yields an on-demand instance. The template *defaults* to spot; it does not *restrict* to it.
+- Passing your own `--instance-market-options`, or dropping the flag so the template default applies.
+- "Spot failed, so I fell back to on-demand to keep things moving." **Do not.** A spot failure is a finding: record it and stop. Converting it into on-demand spend unattended is exactly the decision that is not yours to make.
+
+If spot cannot launch, say so and stop. `AuthFailure.ServiceLinkedRoleCreationNotPermitted` means the account is missing `AWSServiceRoleForEC2Spot` and needs one human IAM call; it is not a reason to spend more.
+
+Because a reclaim terminates a worker mid-run, **never treat "the instance is gone" as "the work is done"** — `wrapper.sh`'s `git log` check for the result commit is the completion signal, and results must be written incrementally so a reclaim costs one cell, not the run.
+
+### Smallest thing that works
+
+**Use the minimum compute that gets the job done. Start at the bottom and step up only against measured evidence, never against a guess that something "should" be bigger.**
+
+- **Start at `t4g.small`** — the launch-template default and the same size as the orchestrator. Most cells fit.
+- **Step up one size at a time** on a *demonstrated* failure: `t4g.small` → `medium` (4 GB) → `large` (8 GB). An OOM kill is evidence; "this feels like it needs more" is not. Never jump to a large type because it would obviously work — that is how a few cents becomes a few dollars per sweep.
+- **Prefer more small workers over one big one.** These cells are independent, so a sweep parallelizes across cheap instances; that is faster *and* cheaper than serializing on one large box.
+- **Never launch a GPU instance.** They are wildly more expensive and nothing here needs one — these are 70M-parameter models and the probe path is forward-only. Even the retrain measured 4.19 GB VRAM on a consumer card (`PROJECT.md` §10, 2026-08-21). A GPU requires explicit human sign-off recorded in §10, every time.
+- **Every worker records its own peak memory** to `data/worker_<id>_resources.txt` via `/usr/bin/time -v`. Read it before sizing the next run: if a `t4g.medium` cell peaked at 1.2 GB it should have been a `small`, and the next one should be. This is the only way sizing gets *tighter* over time instead of ratcheting up.
+- Set the per-worker hard cap (`HOURS` in `worker-bootstrap.sh`) to bound waste: a worker whose command dies sits idle until the cap stops it.
+
+### S3
+
+`research-vm-shared-176048535722` exists and workers can write to it (`S3_BUCKET` in `worker-bootstrap.sh`, exported as `G0_S3_BUCKET`). It is the durability backstop, **not** the source of truth — git is. It matters most under spot: a reclaim kills a worker with no warning, so anything long-running must flush results incrementally and sync as it goes, the way `g0_sweep.py`'s `sync_to_s3` does after every checkpoint. A script that only writes its output at the end will lose everything to a reclaim.
 
 ### What is still not yours to do
 
-Provisioning outside the worker pattern. Do not resize, stop, or start the orchestrator (the role denies it, and stopping it kills the session with no way back in), do not create or modify IAM roles or policies, and do not touch resources that are not tagged `Project=research-vm`.
+Provisioning outside the worker pattern. Do not resize, stop, or start the orchestrator (the role denies it, and stopping it kills the session with no way back in), do not create or modify IAM roles or policies, do not create or repoint launch-template versions, and do not touch resources that are not tagged `Project=research-vm`.
 
 ---
 

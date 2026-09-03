@@ -107,15 +107,40 @@ open(sys.argv[5],'w').write(src)
     # means a reclaimed worker looks identical, at the instance-state
     # level, to one that finished and pushed successfully -- see the
     # git-log check after this loop, which is the actual safety net.
+    # Version=$Default is explicit on purpose. Only v4 carries the spot
+    # options; v1-v3 predate them, so pinning an older version yields a
+    # silently on-demand worker at several times the price. Naming the
+    # version here means a change to the template's default is a visible
+    # change to this line's behaviour rather than an invisible one.
     WORKER_INSTANCE_ID=$(aws ec2 run-instances \
       --region "${REGION}" \
-      --launch-template LaunchTemplateName="${WORKER_TEMPLATE}" \
+      --launch-template LaunchTemplateName="${WORKER_TEMPLATE}",Version='$Default' \
       "${TYPE_ARG[@]}" \
       --instance-market-options 'MarketType=spot,SpotOptions={SpotInstanceType=one-time,InstanceInterruptionBehavior=terminate}' \
       --user-data "file:///tmp/worker-${WID}-userdata.sh" \
       --tag-specifications "ResourceType=instance,Tags=[{Key=Project,Value=research-vm},{Key=Role,Value=worker},{Key=WorkerId,Value=${WID}}]" \
       --query 'Instances[0].InstanceId' --output text)
     echo "Launched worker ${WID}: ${WORKER_INSTANCE_ID}"
+
+    # Assert the thing we actually paid for. The flag above and the
+    # template default both say spot, but neither is self-verifying, and
+    # an on-demand worker is indistinguishable from a spot one in every
+    # other respect -- it just costs several times more and nothing ever
+    # says so. InstanceLifecycle is "spot" for a spot instance and absent
+    # (rendered "None") otherwise. Kill it immediately rather than let a
+    # sweep's worth of mispriced workers run to completion.
+    LIFECYCLE=$(aws ec2 describe-instances --region "${REGION}" \
+      --instance-ids "${WORKER_INSTANCE_ID}" \
+      --query 'Reservations[].Instances[].InstanceLifecycle' --output text)
+    if [ "${LIFECYCLE}" != "spot" ]; then
+      echo "Worker ${WID} (${WORKER_INSTANCE_ID}) launched as '${LIFECYCLE}', not spot."
+      echo "Terminating it and aborting the sweep -- see CLAUDE.md 'Spot only'."
+      aws ec2 terminate-instances --region "${REGION}" --instance-ids "${WORKER_INSTANCE_ID}" >/dev/null || true
+      if [ "${#INSTANCE_IDS[@]}" -gt 0 ]; then
+        aws ec2 terminate-instances --region "${REGION}" --instance-ids "${INSTANCE_IDS[@]}" >/dev/null || true
+      fi
+      exit 1
+    fi
     INSTANCE_IDS+=("${WORKER_INSTANCE_ID}")
   done
 
@@ -196,10 +221,21 @@ if [[ "$STATUS" != "success" ]]; then
   exit 1
 fi
 
-# --- 5. Transcript backup: no S3 bucket exists yet. Transcript will
-#         not survive this terminate. Revisit once a bucket exists —
-#         see infra notes.
-echo "No transcript backup configured (no S3 bucket yet) — .claude/ will be lost on terminate."
+# --- 5. Transcript backup. The bucket does exist (it is the same one
+#         worker-bootstrap.sh has always used as its result backstop);
+#         this step claimed otherwise for long enough that every
+#         orchestrator transcript so far was lost on terminate. Best
+#         effort: never block a clean shutdown on a backup failure.
+S3_BUCKET="research-vm-shared-176048535722"
+if [ -d "${REPO_DIR}/.claude" ]; then
+  aws s3 cp "${REPO_DIR}/.claude" \
+    "s3://${S3_BUCKET}/transcripts/${INSTANCE_ID}-$(date -u +%Y%m%dT%H%M%SZ)/" \
+    --recursive --region "${REGION}" >/dev/null \
+    && echo "Transcript backed up to s3://${S3_BUCKET}/transcripts/" \
+    || echo "Transcript backup failed — continuing to terminate anyway."
+else
+  echo "No .claude/ directory to back up."
+fi
 
 # --- 6. Delete this instance's own idle alarm before it's gone —
 #         otherwise it lingers in INSUFFICIENT_DATA forever, referencing

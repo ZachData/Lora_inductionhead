@@ -59,7 +59,9 @@ else
 fi
 
 # --- hard cap: stop (not terminate) if this worker never finishes ---
-apt install -y at >/dev/null 2>&1 || true
+# `time` is GNU time, for the peak-RSS measurement below -- the shell
+# builtin `time` cannot report maximum resident set size.
+apt install -y at time >/dev/null 2>&1 || true
 systemctl enable --now atd
 HARD_CAP_JOB=$(echo "aws ec2 stop-instances --region ${REGION} --instance-ids ${INSTANCE_ID}" | at now + "${HOURS}" hours 2>&1 | grep -o 'job [0-9]*' | awk '{print $2}')
 
@@ -87,7 +89,24 @@ fi
 # from image-build time, and without this a dependency fix merged to
 # the repo (e.g. a version pin) silently never reaches a worker
 # launched from an older AMI.
-su - "${TARGET_USER}" -c "cd ${REPO_DIR} && source /home/ubuntu/venv/bin/activate && pip install -e '.[dev]' && export G0_S3_BUCKET='${S3_BUCKET}' && __WORKER_CMD__"
+#
+# Wrapped in `/usr/bin/time -v` so every worker records its own peak RSS
+# to data/worker_<id>_resources.txt, which is committed with the results.
+# Sizing otherwise only ever ratchets upward: someone hits an OOM, bumps
+# the instance type, and nothing afterwards ever establishes that the
+# smaller size would now do. CLAUDE.md ("Smallest thing that works")
+# requires reading this file before sizing the next run. `-o` sends the
+# report to the file and leaves the program's own stderr alone.
+RESOURCE_LOG="${REPO_DIR}/data/worker_${WORKER_ID}_resources.txt"
+su - "${TARGET_USER}" -c "mkdir -p ${REPO_DIR}/data"
+su - "${TARGET_USER}" -c "cd ${REPO_DIR} && source /home/ubuntu/venv/bin/activate && pip install -e '.[dev]' && export G0_S3_BUCKET='${S3_BUCKET}' && /usr/bin/time -v -o '${RESOURCE_LOG}' __WORKER_CMD__"
+
+# --- S3 backstop before the push ---
+# git is the source of truth; this exists because a spot reclaim can kill
+# the instance between the work finishing and the push landing. Scoped to
+# result-shaped files: a blind recursive copy of data/ would also ship
+# checkpoint blobs, which are large and already in S3.
+su - "${TARGET_USER}" -c "aws s3 cp ${REPO_DIR}/data s3://${S3_BUCKET}/worker-results/${WORKER_ID}/ --recursive --exclude '*' --include '*.jsonl' --include '*.json' --include 'worker_*_resources.txt' --region ${REGION}" || true
 
 # --- push result, retrying through concurrent-worker collisions ---
 cd "${REPO_DIR}"
