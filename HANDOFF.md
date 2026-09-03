@@ -3,14 +3,14 @@
 _Updated by Claude at natural checkpoints — see `~/.claude/CLAUDE.md` for the convention. Read this first when resuming in this repo._
 
 ## Current goal
-Unblock the M1–M8 rank sweeps, stalled on G3's failed positive control (`PROJECT.md` status board). **All seven diagnostics are now done.** Six optimization-axis ones came back negative on an unexplained `R ≈ 0.01` plateau; the seventh — the reachability graft, run 2026-09-03 — shows the plateau is not about optimization at all: checkpoint B's own weights, grafted into A, do not reach the criterion either. **The blocker is now an interpretive decision by a human, not a missing measurement.** See "Next step".
+Unblock the M1–M8 rank sweeps, stalled on G3's failed positive control (`PROJECT.md` status board). **All seven diagnostics are done, plus an eighth measurement that appears to explain them.** The reachability graft (2026-09-03) showed the plateau is not about optimization: B's own weights grafted into A do not reach the criterion either, and grafting all of layer 3 still leaves R at 0.0077 — so the deficit is *upstream* of layer 3. The prerequisite contrast then found it: the previous-token head at layer 2 scores **0.356 at A vs 0.940 at B**, and its overlap margin over chance is **15x larger at B**. G1 certified that prerequisite as present at A; it is present but roughly a third as strong as where induction actually works. **The blocker is now an interpretive decision by a human, not a missing measurement.** See "Next step".
 
 ## What's been done (most recent last)
 - Confirmed (2026-09-01, prior session) that six G3 diagnostics — lr, rank, frozen-W_K, head choice, full fine-tune, step-budget accounting — all disfavor their respective hypotheses; none explain the plateau.
 - Built `scripts/diagnose_g3_reachability.py` (7th diagnostic): grafts checkpoint B's real weights into A component-by-component to test whether the QK arm's success criterion is reachable *at all*, independent of optimization. 17 unit tests.
 - Verified checkpoint contents for the separate `data/retrain/` onset-bracket work — see REVIEW.md 2026-09-01 entries. Two still-open human-call items there (buffer eviction design after resume; whether a 58-checkpoint post-onset window is adequate for D1), lower priority since D1 is blocked upstream on M1/M2.
 - 2026-09-01: HuggingFace access confirmed working; the graft was attempted on the orchestrator and **OOM-killed** loading checkpoint B alongside A (1.8 GB box).
-- **This session (2026-09-03): stopped treating the OOM as a blocker and sent the job to a worker, which is what workers are for.** Details below.
+- **This session (2026-09-03): ran the reachability graft, then measured G1's prerequisite at B for the first time.** Details below.
 
 ## This session
 
@@ -31,6 +31,30 @@ Controls hold (`full` ≈ 1, `base_a` ≈ 0), plus two consistency checks nothin
 It also overshoots the question: the whole head gives 0.0046 and the whole host block 0.0077 — the same ~0.01 floor — while `full` gives 1.0004. **The structure that makes B's induction head function is not in the head, nor in its block.** Nothing between `layer_host` and `full` was measured, so the gap is unlocalized.
 
 **No verdict has been written and none should be written casually.** The G3 row is untouched, no §10 entry, no §6 edit — interpreting this is a human call (CLAUDE.md §9), and "distributed circuit" vs. "A and B are not in the same basin" vs. "LayerNorm/embedding co-adaptation" have very different consequences for whether M1–M8 is well-posed. See the REVIEW.md 2026-09-03 entry for the four things that result cannot resolve, including a 0.04% drift between the hardcoded `ICL_B` constant and its re-measurement, which if real biases every prior R.
+
+### The prerequisite contrast: A's prerequisite is 2.6x weaker than B's
+`scripts/diagnose_prereq_ab.py` (new), results in `data/prereq_ab_diag.jsonl`, run on a `t4g.small` **spot** worker in 8 min. Walks the circuit both directions at both checkpoints.
+
+| | A (512) | B (2000) |
+|---|---|---|
+| prev-token score | 0.3556 | **0.9403** |
+| prev-token head | (2,1) | **(2,1)** — same head |
+| K-composition overlap | 0.3871 | 0.7691 |
+| **overlap margin over null** | **0.0268** | **0.4081** |
+| induction head (3,6) PMS | 0.0058 | 0.9652 |
+
+**A's numbers reproduce the committed G1 record to three decimals** (0.356 / 0.387 / 0.360) — that A-vs-A agreement is the check that the wiring is right, and it passes.
+
+G1 passed at A on both criteria, both by technicalities (0.356 vs a 0.3 bar; margin 0.027). At B neither statistic is anywhere near its threshold. The head does not move, so this is one component strengthening, not a different one appearing.
+
+**Why it matters:** the deficit is at layer 2 — upstream of layer 3 — which supplies one mechanism for results that had been accumulating as separate negatives. It is why grafting B's entire layer-3 block still left R at 0.0077; why unfreezing `W_K` (in block 3) did not help; why B's `W_Q` does not transfer, being tuned to a 0.94-strength signal A does not supply. **Every G3 diagnostic varied something in or around layer 3.**
+
+**Unplanned second finding:** at B, *three* layer-3 heads do prefix matching — (3,6) 0.9652, (3,1) 0.8993, (3,0) 0.5094 — against a uniform ~0.006 at A. M1-M8 adapts a single head. If induction at B is carried by three, a single-head protocol may not be a low-rank version of what B does but a different object.
+
+**No verdict written.** These are two checkpoints of natural pretraining, so "the prev-token head strengthens and induction follows" is tempting and is a *developmental* claim, which CLAUDE.md reserves for D1. This is a correlation across two checkpoints; causal ordering is not measured here. See the REVIEW.md 2026-09-03 entry for four things it cannot resolve, including whether G1's 0.3 bar was ever derived from anything.
+
+### Sizing: measured at last
+Peak RSS **1.34 GB** (`data/worker_prereqab_resources.txt`) on a 1.8 GB `t4g.small` with the new swapfile. The ladder works — this did not need the `t4g.medium` the reachability graft used, and future one-checkpoint-at-a-time jobs should start at `small`.
 
 ### Fixed: the per-worker `cmd` override was documented but never implemented
 `infra/prompt.md` has told the agent for several commits that a manifest entry "may also carry `cmd` to override the default worker command." Nothing implemented it — `worker-bootstrap.sh` hardcoded `g0_sweep.py`, so a worker could only ever run a checkpoint-grid sweep. That is a large part of why memory-bound one-off jobs kept being treated as blocked-on-a-human instead of being sent to a worker. Now implemented (`e6acb6d`), along with a per-worker `instance_type` override, since the launch template is `t4g.small` in every version — i.e. a default worker would OOM exactly as the orchestrator did. `worker-bootstrap.sh` also now allocates a 3 GB swapfile, which `PROJECT.md` §11 recommends in three separate places.
