@@ -117,8 +117,9 @@ def head_maps(step: int) -> tuple[Any, Any, Any, Any]:
     n = eval_tokens.shape[0]
     with torch.no_grad():
         for start in range(0, n, batch_size):
-            model.run_with_hooks(eval_tokens[start : start + batch_size], fwd_hooks=fwd_hooks,
-                                 return_type=None)
+            model.run_with_hooks(
+                eval_tokens[start : start + batch_size], fwd_hooks=fwd_hooks, return_type=None
+            )
 
     W_O = model.W_O.detach().numpy().copy()
     W_K = model.W_K.detach().numpy().copy()
@@ -187,14 +188,20 @@ def main() -> None:
 
         order = np.argsort(prev.ravel())[::-1][:3]
         top_prev = [
-            {"layer": int(i // prev.shape[1]), "head": int(i % prev.shape[1]),
-             "score": float(prev.ravel()[i])}
+            {
+                "layer": int(i // prev.shape[1]),
+                "head": int(i % prev.shape[1]),
+                "score": float(prev.ravel()[i]),
+            }
             for i in order
         ]
         order = np.argsort(pms.ravel())[::-1][:3]
         top_pms = [
-            {"layer": int(i // pms.shape[1]), "head": int(i % pms.shape[1]),
-             "score": float(pms.ravel()[i])}
+            {
+                "layer": int(i // pms.shape[1]),
+                "head": int(i % pms.shape[1]),
+                "score": float(pms.ravel()[i]),
+            }
             for i in order
         ]
 
@@ -231,12 +238,20 @@ def main() -> None:
             f.flush()
 
         print(f"[{label}] step {step}  ({wall:.0f}s)", flush=True)
-        print(f"  prev-token head : layer {prev_res.layer} head {prev_res.head} "
-              f"score {prev_res.score:.4f} (found={prev_res.found})", flush=True)
-        print(f"  induction head  : ({ind_layer},{ind_head}) PMS {pms[ind_layer, ind_head]:.4f}",
-              flush=True)
-        print(f"  overlap         : {overlap.ratio:.4f} vs null {overlap.null_percentile_value:.4f}"
-              f"  margin {overlap.ratio - overlap.null_percentile_value:+.4f}", flush=True)
+        print(
+            f"  prev-token head : layer {prev_res.layer} head {prev_res.head} "
+            f"score {prev_res.score:.4f} (found={prev_res.found})",
+            flush=True,
+        )
+        print(
+            f"  induction head  : ({ind_layer},{ind_head}) PMS {pms[ind_layer, ind_head]:.4f}",
+            flush=True,
+        )
+        print(
+            f"  overlap         : {overlap.ratio:.4f} vs null {overlap.null_percentile_value:.4f}"
+            f"  margin {overlap.ratio - overlap.null_percentile_value:+.4f}",
+            flush=True,
+        )
         print(f"  top prev-token  : {top_prev}", flush=True)
         print(f"  top PMS         : {top_pms}\n", flush=True)
 
@@ -246,9 +261,11 @@ def main() -> None:
     print("-" * 64)
     for key in ("prev_token_score", "induction_head_pms", "overlap_ratio", "overlap_margin"):
         print(f"{key:34s} {a[key]:12.4f} {b[key]:12.4f}")
-    print(f"{'prev-token head (layer,head)':34s} "
-          f"{str((a['prev_token_layer'], a['prev_token_head'])):>12s} "
-          f"{str((b['prev_token_layer'], b['prev_token_head'])):>12s}")
+    print(
+        f"{'prev-token head (layer,head)':34s} "
+        f"{str((a['prev_token_layer'], a['prev_token_head'])):>12s} "
+        f"{str((b['prev_token_layer'], b['prev_token_head'])):>12s}"
+    )
     print(f"\nwrote {OUT_PATH}")
 
 
