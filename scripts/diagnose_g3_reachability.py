@@ -1,15 +1,13 @@
-"""G3-plateau diagnostic #7: is the QK arm's criterion reachable at all?
+"""G3-plateau diagnostic #7 (+ #8, localization): is the QK arm's
+criterion reachable at all, and if grafting block 3 alone isn't enough,
+where outside it does the missing structure live?
 
-Six diagnostics (lr, rank, frozen-W_K, target head, full fine-tune,
-objective/steps) have each varied one *optimization* axis and come back
-negative, all sharing the same R ~= 0.01 floor. Every one of them asked
-"can gradient descent find the update?" None asked the prior question:
-**does a solution exist inside the QK arm's search space at all?**
-
-This asks it constructively. Checkpoint B *has* the induction circuit, so
-B's own weights are a known-good witness. Graft them into A one circuit
-component at a time and evaluate R on the standard eval set. Each cell is
-a handful of forward passes -- no training, no optimizer, no lr.
+Six optimization diagnostics (lr, rank, frozen-W_K, target head, full
+fine-tune, objective/steps) came back negative, all sharing the same
+R ~= 0.01 floor. Diagnostic #7 asked the prior question constructively:
+does a solution exist inside the QK arm's search space at all? Checkpoint
+B *has* the induction circuit, so grafting B's own weights into A is a
+known-good witness, no training involved.
 
   qk_q      W_Q[3,6]  <- B        the exact object the QK arm trains.
                                   An upper bound on what *any* Delta W_Q
@@ -21,6 +19,29 @@ a handful of forward passes -- no training, no optimizer, no lr.
   layer_host  block 3 <- B        head + MLP + LN of the host block.
   full      everything <- B       sanity: must give R == 1 by construction.
 
+Result (PROJECT.md §10, 2026-09-03): `qk_q` = -0.0006, `head` = 0.0046,
+`layer_host` = 0.0077 -- the same ~0.01 floor as every optimization
+diagnostic -- while `full` = 1.0004. The missing structure is outside
+block 3 entirely, and nothing between `layer_host` and `full` was
+measured. Diagnostic #8 below localizes that gap, guided by the prereq
+A/B contrast (PROJECT.md §10, 2026-09-03): checkpoint A's previous-token
+head (layer 2, head 1) is 2.6-15x weaker than B's, and it is upstream of
+block 3 -- the most concrete lead available for where to look first.
+
+  layer_host_plus_prevtok_head   block 3 + layer2/head1 <- B  sharpest
+                                  test of "the layer-2 prerequisite is
+                                  the bottleneck" as a standalone claim.
+  layer_host_plus_block2         block 3 + block 2 (all of it) <- B
+  layer_host_plus_pre            block 3 + blocks 0,1,2 <- B
+  layer_host_plus_post           block 3 + blocks 4,5 <- B
+  layer_host_plus_embed_unembed  block 3 + embed/unembed <- B
+  layer_host_plus_ln_final       block 3 + ln_final <- B
+
+Each localization cell starts from clean A and grafts block 3 (as
+`layer_host` does) plus exactly the named extra component -- not
+cumulative across cells, so cells can be read independently and run in
+any order or subset.
+
 Reported per cell alongside R: PMS on head (3,6) and the NLL_first /
 NLL_second decomposition R is built from, so a cell that moves prefix
 matching without moving ICL is visible as such rather than collapsing
@@ -30,6 +51,10 @@ was the bottleneck" -- G3's criterion is exactly such a lumped metric).
 Diagnostic only. No protocol change, no results record, no status-board
 row: PROJECT.md §6's thresholds and §8's gates are untouched, and what to
 conclude from this is a human call (CLAUDE.md falsification discipline).
+PROJECT.md §11 (2026-09-03 "UPDATE") flags the localization cells as
+needing sign-off before being run against real checkpoints -- this
+change adds the cells and their tests only; nothing here launches a
+worker or touches data/g3_reachability_diag.jsonl.
 """
 
 from __future__ import annotations
@@ -71,7 +96,36 @@ HEAD_SCOPED = {
     "ov": ["W_V", "b_V", "W_O"],
     "head": ["W_Q", "b_Q", "W_K", "b_K", "W_V", "b_V", "W_O"],
 }
-CELLS = ["base_a", "qk_q", "qk_qk", "ov", "head", "layer_host", "full", "base_b"]
+
+# Localization cells (diagnostic #8): each grafts block LAYER (as
+# layer_host does) plus exactly the named extra component. The prev-token
+# head location (layer 2, head 1) matches G1's finding (PROJECT.md §10,
+# 2026-08-13/2026-09-03), not the general HEAD/LAYER constants above.
+PREVTOK_LAYER, PREVTOK_HEAD = 2, 1
+LOCALIZATION_EXTRA_LAYERS = {
+    "layer_host_plus_block2": (2,),
+    "layer_host_plus_pre": (0, 1, 2),
+    "layer_host_plus_post": (4, 5),
+}
+LOCALIZATION_GLOBAL_KEYS = {
+    "layer_host_plus_embed_unembed": ["embed.W_E", "unembed.W_U", "unembed.b_U"],
+    "layer_host_plus_ln_final": ["ln_final.w", "ln_final.b"],
+}
+LOCALIZATION_PREVTOK_HEAD_CELLS = ("layer_host_plus_prevtok_head",)
+
+CELLS = [
+    "base_a",
+    "qk_q",
+    "qk_qk",
+    "ov",
+    "head",
+    "layer_host",
+    "full",
+    "base_b",
+    *LOCALIZATION_EXTRA_LAYERS,
+    *LOCALIZATION_GLOBAL_KEYS,
+    *LOCALIZATION_PREVTOK_HEAD_CELLS,
+]
 
 
 def git_sha() -> str:
@@ -107,10 +161,23 @@ def graft(
         return
     sd_dst = model_dst.state_dict()
     if cell == "layer_host":
-        prefix = f"blocks.{layer}."
-        for k, v in sd_src.items():
-            if k.startswith(prefix):
-                sd_dst[k].copy_(v)
+        _copy_block(sd_dst, sd_src, layer)
+        return
+    if cell in LOCALIZATION_EXTRA_LAYERS:
+        _copy_block(sd_dst, sd_src, layer)
+        for extra_layer in LOCALIZATION_EXTRA_LAYERS[cell]:
+            _copy_block(sd_dst, sd_src, extra_layer)
+        return
+    if cell in LOCALIZATION_GLOBAL_KEYS:
+        _copy_block(sd_dst, sd_src, layer)
+        for key in LOCALIZATION_GLOBAL_KEYS[cell]:
+            sd_dst[key].copy_(sd_src[key])
+        return
+    if cell in LOCALIZATION_PREVTOK_HEAD_CELLS:
+        _copy_block(sd_dst, sd_src, layer)
+        for short in HEAD_SCOPED["head"]:
+            key = f"blocks.{PREVTOK_LAYER}.attn.{short}"
+            sd_dst[key][PREVTOK_HEAD].copy_(sd_src[key][PREVTOK_HEAD])
         return
     for short in HEAD_SCOPED[cell]:
         key = f"blocks.{layer}.attn.{short}"
@@ -118,6 +185,18 @@ def graft(
         # [n_heads, d_model, d_head] or [n_heads, d_head]. All are indexed
         # by head on dim 0, so one slice rule covers them.
         sd_dst[key][head].copy_(sd_src[key][head])
+
+
+def _copy_block(
+    sd_dst: dict[str, torch.Tensor], sd_src: dict[str, torch.Tensor], block: int
+) -> None:
+    """Copy every tensor belonging to `blocks.{block}.` -- attn (all
+    heads), MLP, and both LayerNorms -- from source into destination.
+    """
+    prefix = f"blocks.{block}."
+    for k, v in sd_src.items():
+        if k.startswith(prefix):
+            sd_dst[k].copy_(v)
 
 
 @torch.no_grad()

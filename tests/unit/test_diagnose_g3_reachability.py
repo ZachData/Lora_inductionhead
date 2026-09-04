@@ -202,6 +202,182 @@ def test_evaluate_returns_every_component_in_range_on_a_toy_model() -> None:
     assert obs["recovery"] == pytest.approx(obs["nll_first"] - obs["nll_second"], rel=1e-12)
 
 
+def _model6(seed: int) -> HookedTransformer:
+    """A 6-layer, 8-head toy model, so the real script's module-level
+    LAYER=3/HEAD=6/PREVTOK_LAYER=2/PREVTOK_HEAD=1 constants all address
+    real positions (the 2-layer `_model` above is too small for that).
+
+    Randomizes every bias and LayerNorm gain, not just `b_*`-prefixed
+    biases like `_model` does: LayerNorm params are named `...ln1.w` /
+    `...ln1.b` (no underscore) and HookedTransformer initializes them to
+    constant 1 / 0 for every seed, identical across models. The
+    `layer_host_plus_ln_final` tests below graft `ln_final.w`/`.b`
+    specifically -- left at the same constant in both seed models, the
+    graft would be a real no-op indistinguishable from a broken one, the
+    same trap `_model`'s own docstring already flags for `b_Q` etc.
+    """
+    cfg = HookedTransformerConfig(
+        n_layers=6,
+        d_model=32,
+        d_head=16,
+        n_heads=8,
+        n_ctx=64,
+        d_vocab=50,
+        act_fn="relu",
+        normalization_type="LN",
+        seed=seed,
+    )
+    model = HookedTransformer(cfg)
+    gen = torch.Generator().manual_seed(3000 + seed)
+    with torch.no_grad():
+        for name, param in model.named_parameters():
+            last = name.rsplit(".", 1)[-1]
+            if last in ("b", "w") or last.startswith("b_"):
+                param.copy_(torch.randn(param.shape, generator=gen) * 0.1)
+    model.eval()
+    return model
+
+
+@pytest.fixture
+def pair6() -> tuple[HookedTransformer, dict[str, torch.Tensor]]:
+    dst = _model6(0)
+    src = {k: v.clone() for k, v in _model6(1).state_dict().items()}
+    return dst, src
+
+
+def _block_keys(sd: dict[str, torch.Tensor], block: int) -> set[str]:
+    prefix = f"blocks.{block}."
+    return {k for k in sd if k.startswith(prefix)}
+
+
+@pytest.mark.parametrize(
+    ("cell", "extra_blocks"),
+    [
+        ("layer_host_plus_block2", (2,)),
+        ("layer_host_plus_pre", (0, 1, 2)),
+        ("layer_host_plus_post", (4, 5)),
+    ],
+)
+def test_localization_layer_cells_touch_exactly_their_named_blocks(
+    pair6: tuple, cell: str, extra_blocks: tuple[int, ...]
+) -> None:
+    dst, src = pair6
+    before = {k: v.clone() for k, v in dst.state_dict().items()}
+    diag.graft(dst, src, cell)
+    changed = _changed_keys(before, dst.state_dict())
+    allowed: set[str] = _block_keys(before, diag.LAYER)
+    for b in extra_blocks:
+        allowed |= _block_keys(before, b)
+    assert changed, f"{cell} grafted nothing"
+    assert changed <= allowed, sorted(changed - allowed)
+    # every named block actually contributed at least one changed key,
+    # not just the host -- otherwise this would pass even if the extra
+    # copy silently no-opped
+    for b in extra_blocks:
+        assert changed & _block_keys(before, b), f"{cell} touched nothing in block {b}"
+
+
+@pytest.mark.parametrize(
+    ("cell", "extra_keys"),
+    [
+        ("layer_host_plus_embed_unembed", {"embed.W_E", "unembed.W_U", "unembed.b_U"}),
+        ("layer_host_plus_ln_final", {"ln_final.w", "ln_final.b"}),
+    ],
+)
+def test_localization_global_cells_touch_exactly_host_plus_named_keys(
+    pair6: tuple, cell: str, extra_keys: set[str]
+) -> None:
+    dst, src = pair6
+    before = {k: v.clone() for k, v in dst.state_dict().items()}
+    diag.graft(dst, src, cell)
+    changed = _changed_keys(before, dst.state_dict())
+    assert extra_keys <= changed, f"{cell} did not change all of {extra_keys}: got {changed}"
+    assert changed <= _block_keys(before, diag.LAYER) | extra_keys, sorted(
+        changed - (_block_keys(before, diag.LAYER) | extra_keys)
+    )
+
+
+def test_localization_embed_unembed_cell_leaves_ln_final_alone(pair6: tuple) -> None:
+    dst, src = pair6
+    before = {k: v.clone() for k, v in dst.state_dict().items()}
+    diag.graft(dst, src, "layer_host_plus_embed_unembed")
+    changed = _changed_keys(before, dst.state_dict())
+    assert "ln_final.w" not in changed
+    assert "ln_final.b" not in changed
+
+
+def test_localization_prevtok_head_cell_touches_only_that_head_in_block2(pair6: tuple) -> None:
+    """Sharpest discrimination in this group: `layer_host_plus_block2`
+    grafts all of block 2, `layer_host_plus_prevtok_head` grafts only
+    head 1's slice within it. If the head-scoping in the prevtok-head
+    branch were broken (e.g. it copied the whole tensor like the
+    layer_host_plus_block2 branch does), this is the test that would
+    catch it -- the two cells would become indistinguishable.
+    """
+    dst, src = pair6
+    before = {k: v.clone() for k, v in dst.state_dict().items()}
+    diag.graft(dst, src, "layer_host_plus_prevtok_head")
+    after = dst.state_dict()
+    changed = _changed_keys(before, after)
+    host_only = _block_keys(before, diag.LAYER)
+    prevtok_extra = changed - host_only
+    assert prevtok_extra, "prevtok-head cell touched nothing outside the host block"
+    assert all(k.startswith(f"blocks.{diag.PREVTOK_LAYER}.attn.") for k in prevtok_extra), sorted(
+        prevtok_extra
+    )
+    other_head = 0 if diag.PREVTOK_HEAD != 0 else 1
+    for key in prevtok_extra:
+        assert torch.equal(before[key][other_head], after[key][other_head]), (
+            f"{key} changed for a head other than {diag.PREVTOK_HEAD}"
+        )
+        assert not torch.equal(before[key][diag.PREVTOK_HEAD], after[key][diag.PREVTOK_HEAD])
+
+
+def test_localization_cells_are_strict_supersets_of_layer_host_alone(pair6: tuple) -> None:
+    """Every localization cell is layer_host plus something; if the
+    "plus something" silently no-opped, the cell would collapse to
+    exactly layer_host's changed set and this catches it.
+    """
+    cells = [
+        "layer_host_plus_block2",
+        "layer_host_plus_pre",
+        "layer_host_plus_post",
+        "layer_host_plus_embed_unembed",
+        "layer_host_plus_ln_final",
+        "layer_host_plus_prevtok_head",
+    ]
+    dst0, src0 = _model6(0), {k: v.clone() for k, v in _model6(1).state_dict().items()}
+    b0 = {k: v.clone() for k, v in dst0.state_dict().items()}
+    diag.graft(dst0, src0, "layer_host")
+    host_changed = _changed_keys(b0, dst0.state_dict())
+    for cell in cells:
+        dst, src = _model6(0), {k: v.clone() for k, v in _model6(1).state_dict().items()}
+        before = {k: v.clone() for k, v in dst.state_dict().items()}
+        diag.graft(dst, src, cell)
+        changed = _changed_keys(before, dst.state_dict())
+        assert host_changed < changed, f"{cell} did not add anything beyond layer_host alone"
+
+
+def test_localization_pre_is_a_superset_of_block2_cell(pair6: tuple) -> None:
+    """layer_host_plus_pre grafts blocks 0,1,2 + host; layer_host_plus_
+    block2 grafts block 2 + host. The former's changed set must contain
+    the latter's -- the ladder ordering the diagnostic's docstring
+    describes ("block 3 + blocks 0,1,2" as a superset of "block 3 +
+    block 2") would be meaningless if the cells didn't actually nest.
+    """
+    dst_a, src_a = _model6(0), {k: v.clone() for k, v in _model6(1).state_dict().items()}
+    before_a = {k: v.clone() for k, v in dst_a.state_dict().items()}
+    diag.graft(dst_a, src_a, "layer_host_plus_block2")
+    block2_changed = _changed_keys(before_a, dst_a.state_dict())
+
+    dst_b, src_b = _model6(0), {k: v.clone() for k, v in _model6(1).state_dict().items()}
+    before_b = {k: v.clone() for k, v in dst_b.state_dict().items()}
+    diag.graft(dst_b, src_b, "layer_host_plus_pre")
+    pre_changed = _changed_keys(before_b, dst_b.state_dict())
+
+    assert block2_changed <= pre_changed
+
+
 def test_evaluate_reads_the_head_it_is_asked_for() -> None:
     """Discrimination guard on the head index: zeroing head 0's OV path
     must not change head 1's PMS, and vice versa. A hardcoded or
