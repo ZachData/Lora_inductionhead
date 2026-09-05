@@ -14,6 +14,7 @@ Read `PROJECT.md` §10's 2026-09-03 and 2026-09-05 entries and §11 first. Short
 - Terminated instances age out of `aws ec2 describe-instances` after a few hours in this account — don't rely on instance state to diagnose an old worker's outcome; git log and the S3 backstop (`s3://research-vm-shared-176048535722/worker-results/<id>/`) are the only durable signals.
 
 ## Useful paths
+- Plain-language narrative (what/why/what we've found, no section-number refs): `OVERVIEW.md`
 - Spec / status board / findings / plan: `PROJECT.md` (§10 decisions log, §11 open questions)
 - Review queue (things needing human judgment, more granular than §10/§11): `REVIEW.md`
 - Reachability graft script (candidate to extend for localization + truncation): `scripts/diagnose_g3_reachability.py`
