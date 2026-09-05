@@ -212,6 +212,119 @@ def test_qk_delta_at_later_layer_does_not_affect_earlier_layer_activations(tiny_
 
 
 # ---------------------------------------------------------------------------
+# 3a. Hook-firing order (REVIEW.md, 2026-08-14): qk_hooks/ov_hooks/
+# qk_both_hooks all use a "capture in an earlier hook, add in a later one"
+# closure. That only works if TransformerLens actually fires the capture
+# hook first in every forward pass -- an assumption nothing above tests,
+# since the zero/nonzero-delta checks only depend on the *values* ending
+# up right, not on *when* each hook ran. A reordering that preserved
+# shapes would slip past every other test in this file while silently
+# reading a stale or mismatched tensor. These pin the order directly, so
+# a future TransformerLens version that changes it fails here first.
+# ---------------------------------------------------------------------------
+
+
+def test_transformerlens_fires_ln1_normalized_before_hook_q(tiny_model) -> None:
+    order: list[str] = []
+
+    def record(name: str):  # type: ignore[no-untyped-def]
+        def hook(t: torch.Tensor, hook: object) -> torch.Tensor:
+            order.append(name)
+            return t
+
+        return hook
+
+    hooks = [
+        ("blocks.1.ln1.hook_normalized", record("ln1_normalized")),
+        ("blocks.1.attn.hook_q", record("hook_q")),
+    ]
+    tokens = torch.randint(0, tiny_model.cfg.d_vocab, (2, 12))
+    with torch.no_grad():
+        tiny_model.run_with_hooks(tokens, fwd_hooks=hooks, return_type="logits")
+
+    # Discovered while writing this test, not assumed going in:
+    # hook_normalized fires 3 times per block (once per Q/K/V projection
+    # internally), not once -- qk_hooks' capture overwrites `box["x"]`
+    # every time, so what matters is that every firing happens strictly
+    # before hook_q, not that there is exactly one.
+    assert order[-1] == "hook_q"
+    assert order[:-1] == ["ln1_normalized"] * (len(order) - 1)
+
+
+def test_transformerlens_ln1_normalized_reads_bit_identical_across_its_repeat_firings(
+    tiny_model,
+) -> None:
+    # The fact above only leaves qk_hooks/qk_both_hooks correct if every
+    # firing produces the same value -- if firing 2 differed from firing
+    # 1 (e.g. a caching bug upstream), `box["x"]` would silently hold
+    # whichever one happened to fire last, and nothing about the
+    # ordering test would reveal it.
+    captured: list[torch.Tensor] = []
+
+    def record(t: torch.Tensor, hook: object) -> torch.Tensor:
+        captured.append(t.clone())
+        return t
+
+    hooks = [("blocks.1.ln1.hook_normalized", record)]
+    tokens = torch.randint(0, tiny_model.cfg.d_vocab, (2, 12))
+    with torch.no_grad():
+        tiny_model.run_with_hooks(tokens, fwd_hooks=hooks, return_type="logits")
+
+    assert len(captured) >= 2
+    assert all(torch.equal(captured[0], c) for c in captured[1:])
+
+
+def test_transformerlens_fires_ln1_normalized_before_hook_k_too(tiny_model) -> None:
+    # qk_both_hooks shares one ln1_normalized capture across both hook_q
+    # and hook_k -- the order *between* q and k doesn't matter (each reads
+    # the same already-captured box independently), only that every
+    # ln1_normalized firing precedes both.
+    order: list[str] = []
+
+    def record(name: str):  # type: ignore[no-untyped-def]
+        def hook(t: torch.Tensor, hook: object) -> torch.Tensor:
+            order.append(name)
+            return t
+
+        return hook
+
+    hooks = [
+        ("blocks.1.ln1.hook_normalized", record("ln1_normalized")),
+        ("blocks.1.attn.hook_q", record("hook_q")),
+        ("blocks.1.attn.hook_k", record("hook_k")),
+    ]
+    tokens = torch.randint(0, tiny_model.cfg.d_vocab, (2, 12))
+    with torch.no_grad():
+        tiny_model.run_with_hooks(tokens, fwd_hooks=hooks, return_type="logits")
+
+    last_normalized = max(i for i, name in enumerate(order) if name == "ln1_normalized")
+    first_q_or_k = min(i for i, name in enumerate(order) if name in ("hook_q", "hook_k"))
+    assert last_normalized < first_q_or_k
+    assert {name for name in order if name != "ln1_normalized"} == {"hook_q", "hook_k"}
+
+
+def test_transformerlens_fires_hook_z_before_hook_attn_out(tiny_model) -> None:
+    order: list[str] = []
+
+    def record(name: str):  # type: ignore[no-untyped-def]
+        def hook(t: torch.Tensor, hook: object) -> torch.Tensor:
+            order.append(name)
+            return t
+
+        return hook
+
+    hooks = [
+        ("blocks.1.attn.hook_z", record("hook_z")),
+        ("blocks.1.hook_attn_out", record("hook_attn_out")),
+    ]
+    tokens = torch.randint(0, tiny_model.cfg.d_vocab, (2, 12))
+    with torch.no_grad():
+        tiny_model.run_with_hooks(tokens, fwd_hooks=hooks, return_type="logits")
+
+    assert order == ["hook_z", "hook_attn_out"]
+
+
+# ---------------------------------------------------------------------------
 # 3b. qk_both_hooks -- diagnostic-only two-matrix hook (REVIEW.md 2026-08-14
 # W_K-bottleneck follow-up). Same discrimination/causality guards as
 # qk_hooks/ov_hooks above, since this is new hook-composition logic whose

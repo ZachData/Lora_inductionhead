@@ -17,6 +17,7 @@ import pytest
 
 from indbw.metric_hash import (
     METRIC_MODULES,
+    MetricHash,
     check,
     compute_metric_hash,
     load_lock,
@@ -211,3 +212,82 @@ def test_check_flags_a_stale_recorded_version(fake_surface: Path, tmp_path: Path
 def test_missing_metric_module_raises(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         compute_metric_hash(src_dir=tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# 4. Version-skew guard (REVIEW.md 2026-09-01): a hash mismatch caused by
+#    ast.dump differing across Python versions must not be reported as a
+#    metric change, since the fix the check would recommend -- bump
+#    METRIC_VERSION and regenerate -- bakes the wrong interpreter's shape
+#    in as the new baseline.
+# ---------------------------------------------------------------------------
+
+
+def _with_python_version(mh: MetricHash, python_version: str) -> MetricHash:
+    return MetricHash(
+        metric_version=mh.metric_version,
+        aggregate=mh.aggregate,
+        definitions=mh.definitions,
+        python_version=python_version,
+    )
+
+
+def test_committed_lockfile_records_a_python_version() -> None:
+    # Pins the fix in place: the exact field that lets check() tell "the
+    # code moved" apart from "a different interpreter dumped the AST".
+    assert load_lock().python_version == "3.11"
+
+
+def test_version_skew_produces_a_different_message_than_a_real_change(
+    fake_surface: Path, tmp_path: Path
+) -> None:
+    lock = tmp_path / "metric_hash.json"
+    mh = update(src_dir=fake_surface, lock_path=lock)
+    (fake_surface / "probes.py").write_text(_BASE.replace("THRESHOLD = 0.3", "THRESHOLD = 0.5"))
+    # Simulate a lockfile written under a different interpreter than the
+    # one running this check -- the real change above is real, but the
+    # message must say "version skew", not "changed", and must not tell
+    # anyone to bump METRIC_VERSION.
+    write_lock(_with_python_version(mh, python_version="99.99"), lock)
+    problems = check(src_dir=fake_surface, lock_path=lock)
+    assert len(problems) == 1
+    assert "version" in problems[0].lower()
+    assert "99.99" in problems[0]
+    assert "Bump METRIC_VERSION" not in problems[0]
+    assert "Do not bump" in problems[0]
+
+
+def test_matching_python_version_still_reports_a_real_change(
+    fake_surface: Path, tmp_path: Path
+) -> None:
+    lock = tmp_path / "metric_hash.json"
+    mh = update(src_dir=fake_surface, lock_path=lock)
+    (fake_surface / "probes.py").write_text(_BASE.replace("THRESHOLD = 0.3", "THRESHOLD = 0.5"))
+    write_lock(_with_python_version(mh, python_version=mh.python_version), lock)
+    problems = check(src_dir=fake_surface, lock_path=lock)
+    assert len(problems) == 1
+    assert "probes.py::THRESHOLD changed" in problems[0]
+
+
+def test_unknown_lockfile_python_version_still_reports_a_real_change(
+    fake_surface: Path, tmp_path: Path
+) -> None:
+    # Backward compatibility: a lockfile written before this field existed
+    # (the repo's own metric_hash.json history, pre-2026-09-05) must not
+    # be silently exempted from real-change detection just because its
+    # version is unrecorded.
+    lock = tmp_path / "metric_hash.json"
+    mh = update(src_dir=fake_surface, lock_path=lock)
+    (fake_surface / "probes.py").write_text(_BASE.replace("THRESHOLD = 0.3", "THRESHOLD = 0.5"))
+    write_lock(_with_python_version(mh, python_version="unknown"), lock)
+    problems = check(src_dir=fake_surface, lock_path=lock)
+    assert len(problems) == 1
+    assert "probes.py::THRESHOLD changed" in problems[0]
+
+
+def test_update_records_the_running_python_version(fake_surface: Path, tmp_path: Path) -> None:
+    import platform
+
+    lock = tmp_path / "metric_hash.json"
+    mh = update(src_dir=fake_surface, lock_path=lock)
+    assert mh.python_version == ".".join(platform.python_version_tuple()[:2])

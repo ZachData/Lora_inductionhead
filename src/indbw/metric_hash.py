@@ -41,11 +41,17 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import platform
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
 from indbw.schema import METRIC_VERSION
+
+#: major.minor only -- the one confirmed source of cross-version drift
+#: (REVIEW.md 2026-09-01) is PEP 695's `type_params=[]` field, which
+#: `ast.dump` started emitting in 3.12; patch releases don't move this.
+CURRENT_PYTHON_VERSION: Final[str] = ".".join(platform.python_version_tuple()[:2])
 
 #: Modules whose definitions constitute the metric surface (CLAUDE.md
 #: names exactly these two). gates.py, lora.py, train.py and the scripts
@@ -69,12 +75,18 @@ class MetricHash:
     metric_version: str
     aggregate: str
     definitions: dict[str, dict[str, str]]  # module filename -> {def name -> per-def hash}
+    #: Interpreter that computed `aggregate`/`definitions`. "unknown" for
+    #: lockfiles written before this field existed (2026-08-14's original
+    #: commit) -- treated as "don't know, don't warn" rather than a match
+    #: or a mismatch.
+    python_version: str = "unknown"
 
     def to_dict(self) -> dict[str, object]:
         return {
             "metric_version": self.metric_version,
             "aggregate": self.aggregate,
             "definitions": self.definitions,
+            "python_version": self.python_version,
         }
 
 
@@ -156,7 +168,12 @@ def compute_metric_hash(
         dumps = normalized_definitions(path.read_text())
         definitions[module] = {name: _short(dump) for name, dump in sorted(dumps.items())}
     aggregate = hashlib.sha256(json.dumps(definitions, sort_keys=True).encode()).hexdigest()
-    return MetricHash(metric_version=metric_version, aggregate=aggregate, definitions=definitions)
+    return MetricHash(
+        metric_version=metric_version,
+        aggregate=aggregate,
+        definitions=definitions,
+        python_version=CURRENT_PYTHON_VERSION,
+    )
 
 
 def load_lock(path: Path = LOCK_PATH) -> MetricHash:
@@ -165,6 +182,7 @@ def load_lock(path: Path = LOCK_PATH) -> MetricHash:
         metric_version=str(data["metric_version"]),
         aggregate=str(data["aggregate"]),
         definitions={m: dict(d) for m, d in data["definitions"].items()},
+        python_version=str(data.get("python_version", "unknown")),
     )
 
 
@@ -211,14 +229,33 @@ def check(src_dir: Path = SRC_DIR, lock_path: Path = LOCK_PATH) -> list[str]:
             "python scripts/check_metric_hash.py --update"
         )
     if lock.aggregate != current.aggregate:
-        problems.append(
-            "the metric surface changed since metric_hash.json was written:\n"
-            + "\n".join(_changed_definitions(lock, current))
-            + f"\n  aggregate {lock.aggregate[:16]} -> {current.aggregate[:16]}\n"
-            "Changing a metric definition invalidates every prior results record. "
-            "Bump METRIC_VERSION in src/indbw/schema.py, then regenerate: "
-            "python scripts/check_metric_hash.py --update"
-        )
+        if lock.python_version != "unknown" and lock.python_version != current.python_version:
+            # REVIEW.md 2026-09-01: this exact mismatch is what produced a
+            # false-positive metric change under 3.12 (ast.dump's
+            # type_params=[] field, PEP 695). The literal-change message
+            # below tells whoever hits it to bump METRIC_VERSION and
+            # regenerate -- which would bake this interpreter's AST-dump
+            # shape in as the new baseline and break the check for every
+            # other machine. Refuse to recommend that here.
+            problems.append(
+                "the metric surface's hash differs from metric_hash.json, but the "
+                f"lockfile was generated under Python {lock.python_version} and this "
+                f"interpreter is {current.python_version} -- ast.dump's output is not "
+                "stable across Python versions (confirmed: 3.12's type_params=[] field, "
+                "PEP 695), so this may be version skew, not a real metric change. "
+                f"Re-run this check under Python {lock.python_version} before concluding "
+                "anything changed. Do not bump METRIC_VERSION or regenerate the lockfile "
+                "from this interpreter."
+            )
+        else:
+            problems.append(
+                "the metric surface changed since metric_hash.json was written:\n"
+                + "\n".join(_changed_definitions(lock, current))
+                + f"\n  aggregate {lock.aggregate[:16]} -> {current.aggregate[:16]}\n"
+                "Changing a metric definition invalidates every prior results record. "
+                "Bump METRIC_VERSION in src/indbw/schema.py, then regenerate: "
+                "python scripts/check_metric_hash.py --update"
+            )
     return problems
 
 

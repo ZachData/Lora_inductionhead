@@ -55,12 +55,23 @@ PROJECT.md §11 (2026-09-03 "UPDATE") flags the localization cells as
 needing sign-off before being run against real checkpoints -- this
 change adds the cells and their tests only; nothing here launches a
 worker or touches data/g3_reachability_diag.jsonl.
+
+REVIEW.md (2026-09-05): a 10-cell job on this script previously lost an
+entire ~45-minute run to a mid-run spot reclaim, because the only sync
+point was after every requested cell finished -- each cell's JSON line
+was flushed to local disk immediately, but nothing shipped it off-box
+before the whole command exited. Now synced to S3 after every cell
+(same best-effort, non-raising pattern as g0_sweep.py's sync_to_s3),
+so a reclaim costs at most the in-flight cell, not the run -- matching
+CLAUDE.md's resumability principle instead of relying on hand-sharding
+into one-cell-per-worker jobs to get the same property operationally.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import subprocess
 import time
@@ -126,6 +137,26 @@ CELLS = [
     *LOCALIZATION_GLOBAL_KEYS,
     *LOCALIZATION_PREVTOK_HEAD_CELLS,
 ]
+
+
+def sync_to_s3(path: Path, bucket: str) -> None:
+    """Best-effort push of `path` to S3, keyed by filename -- same
+    contract as g0_sweep.py's sync_to_s3: a durability backstop against
+    the instance dying before its final git push, never the source of
+    truth, and it must never raise (a transient S3/network failure is a
+    lost backup, not a lost cell). Empty bucket is a no-op.
+    """
+    if not bucket:
+        return
+    try:
+        subprocess.run(
+            ["aws", "s3", "cp", str(path), f"s3://{bucket}/g3_reachability/{path.name}"],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+    except Exception as exc:  # noqa: BLE001 -- deliberate, see docstring: must never propagate
+        print(f"WARNING: S3 sync of {path.name} failed ({exc}); continuing locally", flush=True)
 
 
 def git_sha() -> str:
@@ -294,6 +325,8 @@ def main() -> None:
         with out_path.open("a") as f:
             f.write(json.dumps(rec) + "\n")
             f.flush()
+            os.fsync(f.fileno())
+        sync_to_s3(out_path, os.environ.get("G0_S3_BUCKET", ""))
 
     print(f"\nwrote {out_path}")
 

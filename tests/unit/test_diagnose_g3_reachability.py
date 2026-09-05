@@ -395,3 +395,80 @@ def test_evaluate_reads_the_head_it_is_asked_for() -> None:
         for h in (0, 1)
     ]
     assert pms_by_head[0] != pms_by_head[1], "both heads report identical PMS; head index is inert"
+
+
+# ---------------------------------------------------------------------------
+# sync_to_s3 -- same contract and same tests as g0_sweep.py's version
+# (tests/unit/test_g0_sweep.py): a durability backstop added 2026-09-05
+# after a 10-cell job lost its entire run to a mid-run spot reclaim with
+# nothing shipped off-box (REVIEW.md, 2026-09-05). Covered here because a
+# raised exception would silently abort the diagnostic mid-cell, which is
+# a worse failure than the missing backup this exists to prevent.
+# ---------------------------------------------------------------------------
+
+
+def test_sync_to_s3_empty_bucket_is_a_no_op(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+    from typing import Any
+
+    def _fail_if_called(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("subprocess.run must not be called with an empty bucket")
+
+    monkeypatch.setattr(subprocess, "run", _fail_if_called)
+    target = tmp_path / "g3_reachability_diag.jsonl"
+    target.write_text('{"cell": "base_a"}\n')
+    diag.sync_to_s3(target, "")
+
+
+def test_sync_to_s3_configured_bucket_invokes_aws_cp_with_expected_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+    from typing import Any
+
+    calls: list[list[str]] = []
+
+    def _record(cmd: list[str], **kwargs: Any) -> None:
+        calls.append(cmd)
+
+    monkeypatch.setattr(subprocess, "run", _record)
+    target = tmp_path / "g3local-lnfinal.jsonl"
+    target.write_text('{"cell": "layer_host_plus_ln_final"}\n')
+
+    diag.sync_to_s3(target, "my-research-bucket")
+
+    assert len(calls) == 1
+    cmd = calls[0]
+    assert cmd[:3] == ["aws", "s3", "cp"]
+    assert cmd[3] == str(target)
+    assert cmd[4] == "s3://my-research-bucket/g3_reachability/g3local-lnfinal.jsonl"
+
+
+def test_sync_to_s3_failure_does_not_raise(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+    from typing import Any
+
+    def _boom(*args: Any, **kwargs: Any) -> None:
+        raise subprocess.CalledProcessError(1, ["aws", "s3", "cp"])
+
+    monkeypatch.setattr(subprocess, "run", _boom)
+    target = tmp_path / "g3_reachability_diag.jsonl"
+    target.write_text('{"cell": "full"}\n')
+
+    diag.sync_to_s3(target, "my-research-bucket")  # must not raise
+
+
+def test_sync_to_s3_timeout_does_not_raise(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+    from typing import Any
+
+    def _hang(*args: Any, **kwargs: Any) -> None:
+        raise subprocess.TimeoutExpired(cmd=["aws", "s3", "cp"], timeout=30)
+
+    monkeypatch.setattr(subprocess, "run", _hang)
+    target = tmp_path / "g3_reachability_diag.jsonl"
+    target.write_text('{"cell": "base_b"}\n')
+
+    diag.sync_to_s3(target, "my-research-bucket")  # must not raise

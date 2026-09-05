@@ -19,5 +19,6 @@
       "recovery": "f465872e3ca23a2c"
     }
   },
-  "metric_version": "0.1.0"
+  "metric_version": "0.1.0",
+  "python_version": "3.11"
 }
