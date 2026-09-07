@@ -133,7 +133,10 @@ def test_the_real_trace_dedupes_to_a_strictly_increasing_grid() -> None:
     assert len(steps) < 381, "dedupe removed nothing; the replays are still in"
     assert steps[0] == 516
     assert steps[-1] == 2000
-    assert all(b - a == 4 for a, b in zip(steps, steps[1:], strict=True))
+    # steps[:-1] against steps[1:] -- both length n-1, so strict=True still
+    # guards a length bug. zip(steps, steps[1:], strict=True) raises by
+    # construction, which is how this test failed on its first CI run.
+    assert all(b - a == 4 for a, b in zip(steps[:-1], steps[1:], strict=True))
 
 
 def test_the_real_trace_puts_onset_where_onset_bracket_json_says() -> None:
