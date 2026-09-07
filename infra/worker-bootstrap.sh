@@ -63,7 +63,17 @@ fi
 # builtin `time` cannot report maximum resident set size.
 apt install -y at time >/dev/null 2>&1 || true
 systemctl enable --now atd
-HARD_CAP_JOB=$(echo "aws ec2 stop-instances --region ${REGION} --instance-ids ${INSTANCE_ID}" | at now + "${HOURS}" hours 2>&1 | grep -o 'job [0-9]*' | awk '{print $2}')
+# `stop-instances` CANNOT succeed here: every worker is a *one-time* spot
+# request (CLAUDE.md "Spot only", and the launch template's
+# SpotOptions.SpotInstanceType), and AWS only permits stop/hibernate on
+# *persistent* spot requests. So this hard cap has been silently failing
+# on every spot worker since ca3e20d moved workers to spot -- the `at`
+# job fired, the API call errored, and the instance kept running until a
+# reclaim happened to kill it. Fall back to an OS-level shutdown, which
+# needs no IAM at all: the launch template sets
+# InstanceInitiatedShutdownBehavior=terminate, so `shutdown -h now` is
+# the same terminate the success path already relies on.
+HARD_CAP_JOB=$(echo "aws ec2 stop-instances --region ${REGION} --instance-ids ${INSTANCE_ID} || shutdown -h now" | at now + "${HOURS}" hours 2>&1 | grep -o 'job [0-9]*' | awk '{print $2}')
 
 # --- swap: a checkpoint load sits right at a t4g.small's ceiling ---
 # PROJECT.md §11 records this twice (integration test 2026-08-12, G1 forward
@@ -125,5 +135,9 @@ if [ "${PUSHED}" = true ]; then
   shutdown -h now
 else
   echo "Push failed after retries — stopping for inspection, not terminating."
-  aws ec2 stop-instances --region "${REGION}" --instance-ids "${INSTANCE_ID}"
+  # Same one-time-spot limitation as the hard cap above: the stop will
+  # fail and leave the instance running indefinitely. Inspection is no
+  # longer worth that -- results and logs are synced to S3 as they are
+  # produced, so a terminated worker still leaves its evidence behind.
+  aws ec2 stop-instances --region "${REGION}" --instance-ids "${INSTANCE_ID}" || shutdown -h now
 fi
