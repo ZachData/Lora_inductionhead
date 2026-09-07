@@ -178,6 +178,59 @@ def copying_score_chunked(
     return value
 
 
+def copying_score_factored(
+    W_U: np.ndarray, W_V: np.ndarray, W_O: np.ndarray, W_E: np.ndarray, chunk: int = 512
+) -> float:
+    """The same score again, routed through the rank-d_head factorization.
+
+    M_OV = W_O^T W_V^T has rank <= d_head, so the [vocab, vocab] logit
+    matrix factors through a 64-dimensional inner product rather than a
+    512-dimensional one:
+
+        logits[t, s] = W_U[s] . (W_O^T W_V^T e_t)
+                     = (W_U[s] W_O^T) . (W_V^T e_t)
+                     = L[s] . V[t],   L = W_U W_O^T,  V = W_E W_V
+
+    Both L and V are [vocab, d_head]. That is 8x fewer FLOPs at
+    pythia-70m's shapes and it is the difference between fitting inside a
+    worker's 3-hour cap and not: the composed path costs ~2.6e12 FLOPs per
+    head, ~130 s on a t4g.small, ~3.5 h over 48 heads at two checkpoints.
+
+    Arithmetically identical to `copying_score_chunked` -- the tests assert
+    exact agreement -- but *not* bit-identical in floating point, since the
+    two associations round differently. Computed in float64 for that
+    reason: the model's weights are float32, and at float32 a near-tie in a
+    head with no copying structure could resolve differently between the
+    two paths. float64 puts the disagreement ~1e-13 below any real margin.
+    """
+    if W_V.ndim != 2 or W_O.ndim != 2:
+        raise ValueError(f"W_V and W_O must be 2D, got {W_V.shape} and {W_O.shape}")
+    if not np.any(W_V) or not np.any(W_O):
+        raise ValueError("copying_score_factored: W_V or W_O is all-zero — OV is undefined")
+    # Deliberately reuses ov_matrix's shape checks rather than restating
+    # them, so the two paths cannot drift apart on what they accept.
+    ov_matrix(W_V, W_O)
+
+    L = np.asarray(W_U, dtype=np.float64) @ np.asarray(W_O, dtype=np.float64).T  # [vocab, d_head]
+    V = np.asarray(W_E, dtype=np.float64) @ np.asarray(W_V, dtype=np.float64)  # [vocab, d_head]
+    if L.shape != V.shape:
+        raise ValueError(f"factored shapes disagree: L {L.shape}, V {V.shape}")
+    vocab = L.shape[0]
+    if chunk < 1:
+        raise ValueError(f"chunk must be >= 1, got {chunk}")
+
+    n_correct = 0
+    for start in range(0, vocab, chunk):
+        stop = min(start + chunk, vocab)
+        block = V[start:stop] @ L.T  # [c, vocab]
+        n_correct += int(np.count_nonzero(np.argmax(block, axis=1) == np.arange(start, stop)))
+        del block
+    value = n_correct / vocab
+    if not (0.0 <= value <= 1.0):
+        raise ValueError(f"copying_score_factored out of range: {value}")
+    return value
+
+
 def assert_grid_informative(name: str, grid: np.ndarray, step: int) -> None:
     """Refuse to report a readout that cannot have come from a real pass.
 
@@ -208,28 +261,20 @@ def measure(step: int, chunk: int, ind_layer: int, ind_head: int) -> dict[str, A
     model.eval()
     n_layers, n_heads = model.cfg.n_layers, model.cfg.n_heads
 
-    # W_U is [d_model, vocab] and W_E is [vocab, d_model] in TL; the
-    # hashed metric wants both as [vocab, d_model].
-    W_U = model.W_U.detach().numpy().T.copy()
-    W_E = model.W_E.detach().numpy().copy()
-    W_V_all = model.W_V.detach().numpy()
-    W_O_all = model.W_O.detach().numpy()
+    # W_V/W_O are small (6 MB each across all heads) and are needed on
+    # both sides, so they are taken now. W_U and W_E are vocab-sized
+    # (103 MB each) and are taken *after* the forward pass, below.
+    W_V_all = model.W_V.detach().numpy().copy()
+    W_O_all = model.W_O.detach().numpy().copy()
 
-    copy_grid = np.zeros((n_layers, n_heads))
-    for layer in range(n_layers):
-        for head in range(n_heads):
-            M_OV = ov_matrix(W_V_all[layer, head], W_O_all[layer, head])
-            copy_grid[layer, head] = copying_score_chunked(W_U, M_OV, W_E, chunk=chunk)
-        print(
-            f"  step {step} layer {layer} copying: "
-            f"{np.array2string(copy_grid[layer], precision=5)}",
-            flush=True,
-        )
-    assert_grid_informative("copying_score", copy_grid, step)
-
-    del W_U, W_E
-
-    # --- value spread for the candidate head -------------------------
+    # --- value spread for the candidate head, FIRST ------------------
+    # Ordered before the copying grid so the model can be freed before
+    # the vocab-sized allocations start. Measured separately: the
+    # forward pass peaks ~1.34 GB (diagnose_prereq_ab.py's recorded RSS)
+    # and the copying loop ~0.50 GB; run concurrently they exceed a
+    # t4g.small's 1.8 GB and fall into swap, run in sequence neither
+    # does. This is the cheapest available way to keep CLAUDE.md's
+    # "smallest thing that works" honest rather than sizing up.
     M_OV_cand = ov_matrix(W_V_all[ind_layer, ind_head], W_O_all[ind_layer, ind_head])
     eval_tokens = build_eval_tokens(N_EVAL, T, SEED, D_VOCAB)[:SPREAD_SEQUENCES]
 
@@ -256,6 +301,12 @@ def measure(step: int, chunk: int, ind_layer: int, ind_head: int) -> dict[str, A
             ],
             return_type=None,
         )
+
+    # Vocab-sized weights taken only now, so they never coexist with the
+    # forward pass's activations. W_U is [d_model, vocab] and W_E is
+    # [vocab, d_model] in TL; the hashed metric wants both [vocab, d_model].
+    W_U = model.W_U.detach().numpy().T.copy()
+    W_E = model.W_E.detach().numpy().copy()
     del model
 
     if "attn" not in captured or "resid" not in captured:
@@ -276,6 +327,29 @@ def measure(step: int, chunk: int, ind_layer: int, ind_head: int) -> dict[str, A
     spread_arr = np.asarray(spreads)
     if not np.all(np.isfinite(spread_arr)):
         raise ValueError(f"non-finite value spread at step {step}")
+    # clear(), not `del captured` — the name is closed over by the hooks
+    # above, and deleting it makes those closures reference an unbound
+    # name. Clearing drops the array references, which is the point.
+    captured.clear()
+    del attn, resid
+
+    # --- copying score for every head, model now freed ---------------
+    copy_grid = np.zeros((n_layers, n_heads))
+    for layer in range(n_layers):
+        for head in range(n_heads):
+            # Factored path: 8x cheaper than composing M_OV first, and
+            # pinned to the composed path (which is itself pinned to the
+            # hashed metric) by tests. The composed path at 48 heads x 2
+            # checkpoints does not fit the worker's 3-hour cap.
+            copy_grid[layer, head] = copying_score_factored(
+                W_U, W_V_all[layer, head], W_O_all[layer, head], W_E, chunk=chunk
+            )
+        print(
+            f"  step {step} layer {layer} copying: "
+            f"{np.array2string(copy_grid[layer], precision=5)}",
+            flush=True,
+        )
+    assert_grid_informative("copying_score", copy_grid, step)
 
     return {
         "step": step,

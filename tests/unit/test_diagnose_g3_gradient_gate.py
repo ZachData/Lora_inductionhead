@@ -38,7 +38,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from diagnose_g3_gradient_gate import copying_score_chunked  # noqa: E402
+from diagnose_g3_gradient_gate import (  # noqa: E402
+    copying_score_chunked,
+    copying_score_factored,
+    ov_matrix,
+)
 
 from indbw.probes import copying_score  # noqa: E402
 
@@ -185,6 +189,54 @@ def test_rejects_shape_mismatch() -> None:
 
 
 # --- the OV composition from TransformerLens's weight layout -----------
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2, 3, 4])
+def test_factored_path_agrees_with_the_composed_path_exactly(seed: int) -> None:
+    """The equivalence oracle for the 8x-cheaper path actually used on the
+    worker. (W_U W_O^T)(W_V^T e_t) and W_U (W_O^T W_V^T) e_t are the same
+    number by associativity; this pins that the code implements that
+    identity and not a transposed cousin of it, over random weights where
+    a transpose error cannot cancel."""
+    rng = _rng(seed)
+    vocab, d_model, d_head = 40, 9, 3
+    W_U = rng.standard_normal((vocab, d_model))
+    W_E = rng.standard_normal((vocab, d_model))
+    W_V = rng.standard_normal((d_model, d_head))
+    W_O = rng.standard_normal((d_head, d_model))
+
+    composed = copying_score_chunked(W_U, ov_matrix(W_V, W_O), W_E, chunk=7)
+    assert copying_score_factored(W_U, W_V, W_O, W_E, chunk=7) == composed
+
+
+def test_factored_path_agrees_on_a_head_that_actually_copies() -> None:
+    """The random test above scores near 0 for most seeds, where agreement is
+    cheap -- two broken implementations both returning ~0 would also agree.
+    Pin the equivalence on a constructed near-copying head instead, where
+    the score is high and a wrong factorization would visibly diverge."""
+    vocab, d_model, d_head = 32, 8, 8
+    rng = _rng(11)
+    # W_V W_O ~ identity on the residual, so M_OV ~ I and the head copies.
+    W_V = np.eye(d_model, d_head)
+    W_O = np.eye(d_head, d_model)
+    W_E = rng.standard_normal((vocab, d_model))
+    W_U = W_E.copy()  # unembedding matched to embedding -> strong copying
+
+    composed = copying_score_chunked(W_U, ov_matrix(W_V, W_O), W_E, chunk=5)
+    assert composed > 0.5, "fixture is not exercising a copying head"
+    assert copying_score_factored(W_U, W_V, W_O, W_E, chunk=5) == composed
+
+
+def test_factored_path_rejects_a_zero_ov_factor() -> None:
+    rng = _rng(12)
+    vocab, d_model, d_head = 10, 6, 2
+    with pytest.raises(ValueError):
+        copying_score_factored(
+            rng.standard_normal((vocab, d_model)),
+            np.zeros((d_model, d_head)),
+            rng.standard_normal((d_head, d_model)),
+            rng.standard_normal((vocab, d_model)),
+        )
 
 
 def test_ov_matrix_matches_the_section_3_definition() -> None:
