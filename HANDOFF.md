@@ -9,6 +9,11 @@ Read `PROJECT.md` §10's 2026-09-03, 2026-09-05 and **2026-09-07** entries and �
 
 **Current plan, user-authorized 2026-09-07 (§10):** (b) measure the candidate head's copying score and OV value spread at $A$ — two forward passes, the Cor 17.2/17.3 precondition for M1/M2 meaning anything, never measured for any head; then (a) exploit the retrain bracket. G3 stays failed and M1–M4 stay blocked; neither is a route around the gate.
 
+**Progress on that plan:**
+- (a) first pass **done** — `scripts/analyze_retrain_onset.py` → `data/retrain_onset_cb25e3f6c2185c1e.{json,png}`, §10 2026-09-07. PMS crosses §5's 0.3 bar at step 676, $R$ crosses 0.5 at 816 and 0.80 at 1012; first-copy NLL rises while second-copy falls 8.3 nats below the uniform floor, which answers §11's 2026-08-19 flattening question for *this* run. No verdict.
+- (b) **launched** — worker `g3gate`, spot `t4g.small` `i-088119f35583aabae`, `scripts/diagnose_g3_gradient_gate.py`. ~26 min of compute (measured, not estimated). Completion signal is the `Worker g3gate result` commit, not the instance disappearing.
+- (a) **not yet done**, and the next step is gated: using the stride-4 delta as M5's truncation object is a *protocol* change (training-free construction in place of a training outcome) that §11's 2026-09-04 entry reserves for explicit human sign-off. Do not start it on the strength of the general "(a)" authorization.
+
 ## Environment notes
 - Orchestrator: `t4g.small`, 1.8 GB RAM, no swap by default. Its venv may be Python 3.12 and may not have `pytest` installed — check before assuming tier 1–2 can run locally; `pip install -e ".[dev]"` fixes both. CI runs 3.11 and is the authoritative green/red signal.
 - Do not bump `METRIC_VERSION` to silence `test_committed_lockfile_matches_current_metric_source` under a 3.12 venv — that's a known `ast.dump` false positive (PROJECT.md §11), not a real metric change.
