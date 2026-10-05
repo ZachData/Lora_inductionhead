@@ -101,3 +101,28 @@ def test_pick_sae_path_nearest_l0_and_exact_layer_match() -> None:
     assert cells.pick_sae_path(files, 1) == "layer_1/width_16k/average_l0_65/params.npz"
     with pytest.raises(FileNotFoundError):
         cells.pick_sae_path(files, 2)
+
+
+def test_shuffle_answers_is_a_seeded_derangement_preserving_the_multiset() -> None:
+    q = [f"q{i}" for i in range(50)]
+    a = [f"a{i}" for i in range(50)]
+    s = generate.shuffle_answers(q, a, seed=0)
+    assert [x for x, _ in s] == q
+    answers = [y for _, y in s]
+    assert sorted(answers) == sorted(a)
+    assert all(ans != a[i] for i, ans in enumerate(answers))  # no question keeps its own answer
+    assert s == generate.shuffle_answers(q, a, seed=0) and s != generate.shuffle_answers(
+        q, a, seed=1
+    )
+    with pytest.raises(ValueError):
+        generate.shuffle_answers(["q"], ["a"], seed=0)
+
+
+def test_shuffled_arm_is_optional_and_off_by_default() -> None:
+    assert cells.INCLUDE_SHUFFLED is False
+    base = cells.enumerate_cells(SCORES)
+    assert not any(c.arm == "shuffled_answers" for c in base)
+    withs = cells.enumerate_cells(SCORES, include_shuffled=True)
+    shuffled = [c for c in withs if c.arm == "shuffled_answers"]
+    assert len(withs) == len(base) + len(shuffled) and len(shuffled) == 2 * len(cells.NAMED_SEEDS)
+    assert all(c.layers == tuple(range(cells.N_LAYERS)) for c in shuffled)

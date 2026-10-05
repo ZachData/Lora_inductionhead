@@ -165,3 +165,69 @@ def mcnemar_exact_pvalue(only_a: int, only_b: int) -> float:
     k = min(only_a, only_b)
     tail = sum(math.comb(n, i) for i in range(k + 1)) / 2**n
     return float(min(1.0, 2 * tail))
+
+
+def bootstrap_t_pvalue(
+    x: np.ndarray,
+    null_value: float,
+    n_boot: int,
+    rng: np.random.Generator,
+    side: Side = "less",
+) -> float:
+    """Studentized-bootstrap p for H0 on the cluster mean (side='less': H1 mean < null_value).
+
+    Second-order accurate for skewed data, unlike a sign-flip on shifted differences, which
+    is exact only when the differences are symmetric about the null value. Floor 1/(n_boot+1).
+    """
+    v = _check_finite(x, "x")
+    n = v.size
+    sd = v.std(ddof=1) if n > 1 else 0.0
+    if sd <= 1e-12 * max(1.0, abs(float(v.mean()))):
+        raise ValueError("constant input: the studentized statistic is undefined")
+    se = sd / math.sqrt(n)
+    t_obs = (v.mean() - null_value) / se
+    idx = rng.integers(0, n, size=(n_boot, n))
+    b = v[idx]
+    se_b = b.std(axis=1, ddof=1) / math.sqrt(n)
+    se_b = np.where(se_b > 0, se_b, np.inf)  # a degenerate resample carries no evidence
+    t_b = (b.mean(axis=1) - v.mean()) / se_b
+    if side == "less":
+        k = int(np.sum(t_b <= t_obs))
+    elif side == "greater":
+        k = int(np.sum(t_b >= t_obs))
+    elif side == "two-sided":
+        k = int(np.sum(np.abs(t_b) >= abs(t_obs)))
+    else:
+        raise ValueError(f"unknown side {side!r}")
+    return (1 + k) / (n_boot + 1)
+
+
+def crossed_bootstrap_means(d: np.ndarray, n_boot: int, rng: np.random.Generator) -> np.ndarray:
+    """Bootstrap means of a [seeds, items] array, resampling seeds and items independently.
+
+    Items are resampled with one shared index across seeds (they are the same test items),
+    so the pairing that removes item difficulty is kept while seed-to-seed variance enters
+    the interval. Resampling items alone ignores seed variance and is anti-conservative.
+    """
+    a = np.asarray(d, dtype=np.float64)
+    if a.ndim != 2 or a.size == 0 or not np.all(np.isfinite(a)):
+        raise ValueError("expected a finite, non-empty [seeds, items] array")
+    s, n = a.shape
+    out = np.empty(n_boot)
+    for b in range(n_boot):
+        rows = rng.integers(0, s, size=s)
+        cols = rng.integers(0, n, size=n)
+        out[b] = a[np.ix_(rows, cols)].mean()
+    return out
+
+
+def fixed_sequence_adjust(pvalues: np.ndarray) -> np.ndarray:
+    """Fixed-sequence (gatekeeping) adjusted p: running max in the pre-registered order.
+
+    Each hypothesis is tested at full alpha, but only if every earlier one was rejected;
+    FWER <= alpha with no splitting (Maurer, Hothorn & Lehmacher 1995).
+    """
+    p = _check_finite(pvalues, "pvalues")
+    if np.any((p < 0) | (p > 1)):
+        raise ValueError("p-values must lie in [0, 1]")
+    return np.maximum.accumulate(p)

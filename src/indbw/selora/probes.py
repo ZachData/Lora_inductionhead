@@ -187,25 +187,51 @@ def divergence_with_null(
     }
 
 
-def peak_layer_stability(
-    excess_by_layer: np.ndarray,
+def make_strata(lengths: np.ndarray, digit_counts: np.ndarray, n_len_bins: int = 5) -> np.ndarray:
+    """Permutation strata: prompt-length quantile bin x digit-count bin {0, 1-2, 3+}.
+
+    Permuting class labels only within a stratum means neither length nor "contains
+    numbers" can masquerade as a math-vs-general difference.
+    """
+    ln = np.asarray(lengths, dtype=float)
+    dg = np.asarray(digit_counts, dtype=float)
+    if ln.shape != dg.shape or ln.ndim != 1:
+        raise ValueError("lengths and digit_counts must be matching 1-D arrays")
+    edges = np.quantile(ln, np.linspace(0, 1, n_len_bins + 1)[1:-1]) if n_len_bins > 1 else []
+    len_bin = np.digitize(ln, edges)
+    dig_bin = np.digitize(dg, [0.5, 2.5])
+    return np.asarray(len_bin * 3 + dig_bin, dtype=int)
+
+
+def peak_layer_bootstrap(
+    acts_by_layer: Sequence[np.ndarray],
+    labels: np.ndarray,
+    null_means: np.ndarray,
+    k: int,
+    n_boot: int,
+    rng: np.random.Generator,
     lo: int,
     hi: int,
-    rng: np.random.Generator,
-    noise_sd: np.ndarray,
-    n_boot: int,
+    strata: np.ndarray | None = None,
 ) -> float:
-    """Fraction of parametric-bootstrap draws whose argmax layer lies in [lo, hi].
+    """Fraction of prompt-level bootstrap resamples whose argmax-excess layer lies in [lo, hi].
 
-    `excess_by_layer[l]` is the observed excess, `noise_sd[l]` its standard
-    error (from a prompt-level bootstrap done by the caller). Draws are
-    Gaussian around the observed excess. Pre-registered use: the old
-    "peak at layer 8" claim is supported only if this is >= 0.8.
+    Prompts are resampled within (class x stratum) cells, identically for every layer, and
+    each layer's excess is its resampled top-k statistic minus its fixed permutation-null mean.
     """
-    ex = np.asarray(excess_by_layer, dtype=np.float64)
-    sd = np.asarray(noise_sd, dtype=np.float64)
-    if ex.shape != sd.shape or ex.ndim != 1:
-        raise ValueError("excess_by_layer and noise_sd must be matching 1-D arrays")
-    draws = ex + sd * rng.standard_normal((n_boot, ex.size))
-    peaks = draws.argmax(axis=1)
-    return float(np.mean((peaks >= lo) & (peaks <= hi)))
+    nm = np.asarray(null_means, dtype=float)
+    if nm.shape != (len(acts_by_layer),):
+        raise ValueError("null_means must have one entry per layer")
+    y = np.asarray(labels).astype(bool)
+    st = np.zeros(y.size, dtype=int) if strata is None else np.asarray(strata)
+    groups = [np.flatnonzero((y == c) & (st == s)) for c in (False, True) for s in np.unique(st)]
+    groups = [g for g in groups if g.size]
+    hits = 0
+    for _ in range(n_boot):
+        idx = np.concatenate([rng.choice(g, size=g.size, replace=True) for g in groups])
+        ex = [
+            topk_mean_abs(welch_effects(np.asarray(a)[idx], y[idx]), k) - nm[li]
+            for li, a in enumerate(acts_by_layer)
+        ]
+        hits += lo <= int(np.argmax(ex)) <= hi
+    return hits / n_boot

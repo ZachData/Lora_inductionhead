@@ -54,18 +54,18 @@ def test_verdict_is_computed_and_discriminates() -> None:
 
 def test_compound_claim_fails_if_any_clause_fails() -> None:
     ctrl = list(prereg.claim("S1a").controls)
-    good = {"n_cells_holm_p_above_alpha": 0.0, "max_fvu_ft_upper95": 0.10}
+    good = {"n_cells_p_above_alpha": 0.0, "max_fvu_ft_upper95": 0.10}
     assert _adj("S1a", good, ctrl).verdict == "pass"
     assert _adj("S1a", {**good, "max_fvu_ft_upper95": 0.20}, ctrl).verdict == "fail"
-    assert _adj("S1a", {**good, "n_cells_holm_p_above_alpha": 3.0}, ctrl).verdict == "fail"
+    assert _adj("S1a", {**good, "n_cells_p_above_alpha": 3.0}, ctrl).verdict == "fail"
 
 
 def test_missing_control_is_refused() -> None:
     with pytest.raises(ValueError, match="controls"):
         _adj(
             "S1a",
-            {"n_cells_holm_p_above_alpha": 0.0, "max_fvu_ft_upper95": 0.1},
-            ["matched-norm random LoRA"],
+            {"n_cells_p_above_alpha": 0.0, "max_fvu_ft_upper95": 0.1},
+            ["spectrum-matched random LoRA"],
         )
 
 
@@ -81,3 +81,24 @@ def test_record_roundtrips_through_schema() -> None:
     rec = _adj("S0", OBS_S0_PASS, ["late-layer arm"])
     again = record_from_dict(__import__("json").loads(rec.to_json_line()))
     assert again.is_self_consistent() and again.observed["prereg_hash"] == prereg.prereg_hash()
+
+
+def test_assumptions_are_recorded_and_complete() -> None:
+    a = prereg.ASSUMPTIONS
+    for k in (
+        "gsm8k_accuracy",
+        "gsm8k_n_items",
+        "gsm8k_discordance_low",
+        "gsm8k_discordance_high",
+        "seed_item_correlation",
+        "fvu_delta_sd",
+        "sae_prompts",
+    ):
+        assert k in a
+    assert 0 < a["gsm8k_discordance_low"] < a["gsm8k_discordance_high"] < 1
+
+
+def test_prereg_hash_covers_assumptions_and_multiplicity(monkeypatch: pytest.MonkeyPatch) -> None:
+    h = prereg.prereg_hash()
+    monkeypatch.setitem(prereg.ASSUMPTIONS, "fvu_delta_sd", 0.123)
+    assert prereg.prereg_hash() != h

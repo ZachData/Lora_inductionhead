@@ -32,8 +32,7 @@ def tiny_model() -> HookedTransformer:
     return model
 
 
-@pytest.fixture
-def tiny_gemma2():  # type: ignore[no-untyped-def]
+def _make_tiny_gemma2():  # type: ignore[no-untyped-def]
     """A randomly-initialized 4-layer Gemma2 (HF) for the selective-LoRA extension.
 
     float32, eager attention (Gemma2 softcapping), seeded. Never a real checkpoint.
@@ -60,6 +59,18 @@ def tiny_gemma2():  # type: ignore[no-untyped-def]
     model = Gemma2ForCausalLM(cfg)
     model.eval()
     return model
+
+
+@pytest.fixture
+def tiny_gemma2():  # type: ignore[no-untyped-def]
+    """A randomly-initialized 4-layer Gemma2 (HF), float32, eager attention, seeded."""
+    return _make_tiny_gemma2()
+
+
+@pytest.fixture
+def tiny_gemma2_factory():  # type: ignore[no-untyped-def]
+    """Callable returning a fresh, identically-initialized tiny Gemma2 each call."""
+    return _make_tiny_gemma2
 
 
 @pytest.fixture

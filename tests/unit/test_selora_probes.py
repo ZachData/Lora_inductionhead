@@ -117,13 +117,52 @@ def test_welch_dead_feature_is_zero_not_nan() -> None:
     assert eff[1] > 100  # zero within-class variance: huge but finite t via the guard
 
 
-def test_peak_layer_stability_discriminates() -> None:
-    rng = np.random.default_rng(3)
-    ex = np.zeros(26)
-    ex[8] = 5.0
-    sharp = probes.peak_layer_stability(ex, 6, 10, rng, np.full(26, 0.1), 500)
-    flat = probes.peak_layer_stability(np.zeros(26), 6, 10, rng, np.full(26, 1.0), 2000)
-    assert sharp == 1.0
-    assert flat < 0.4  # 5 of 26 layers fall in [6,10] by chance: ~0.19
+def test_make_strata_separates_length_and_digit_bins() -> None:
+    lengths = np.array([5, 5, 50, 50, 5, 50])
+    digits = np.array([0, 4, 0, 4, 0, 4])
+    st = probes.make_strata(lengths, digits, n_len_bins=2)
+    assert st[0] == st[4] and st[1] != st[0] and st[2] != st[0] and st[3] == st[5]
+    assert len(set(st.tolist())) == 4
+
+
+def test_digit_strata_kill_a_pure_digit_confound() -> None:
+    # Class 1 = every prompt with digits; the SAE effect is a digit feature. Stratifying on
+    # digit count makes the labelling unpermutable, so the null equals the observed (p = 1):
+    # the design cannot attribute a digit effect to "math".
+    rng = np.random.default_rng(4)
+    n = 60
+    digits = np.r_[np.zeros(30), np.full(30, 3)]
+    y = (digits > 0).astype(int)
+    acts = np.maximum(rng.normal(size=(n, 50)), 0)
+    acts[y == 1, 0] += 5.0
+    st = probes.make_strata(np.full(n, 10), digits, n_len_bins=1)
+    res = probes.divergence_with_null(acts, y, 3, 50, rng, strata=st)
+    assert res["p_value"] == 1.0
+
+
+def _layers_with_peak(
+    rng: np.random.Generator, peak: int, n_layers: int = 12
+) -> tuple[list[np.ndarray], np.ndarray]:
+    y = np.repeat([0, 1], 40)
+    out = []
+    for li in range(n_layers):
+        a = np.maximum(rng.normal(size=(80, 60)), 0)
+        a[y == 1, :5] += 2.5 if li == peak else 0.3
+        out.append(a)
+    return out, y
+
+
+def test_peak_layer_bootstrap_discriminates() -> None:
+    rng = np.random.default_rng(5)
+    acts, y = _layers_with_peak(rng, peak=8)
+    nulls = np.array([probes.divergence_with_null(a, y, 5, 50, rng)["null_mean"] for a in acts])
+    inside = probes.peak_layer_bootstrap(acts, y, nulls, 5, 200, rng, 6, 10)
+    outside = probes.peak_layer_bootstrap(acts, y, nulls, 5, 200, rng, 0, 4)
+    assert inside >= 0.95 and outside <= 0.05
+
+
+def test_peak_layer_bootstrap_guards() -> None:
+    rng = np.random.default_rng(6)
+    acts, y = _layers_with_peak(rng, 3, n_layers=4)
     with pytest.raises(ValueError):
-        probes.peak_layer_stability(ex, 6, 10, rng, np.ones(5), 10)
+        probes.peak_layer_bootstrap(acts, y, np.zeros(3), 5, 10, rng, 0, 1)

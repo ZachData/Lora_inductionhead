@@ -49,8 +49,11 @@ class CellData:
     sae_attn: torch.Tensor
     gsm_questions: list[str]
     gsm_golds: list[float]
-    mmlu_prompts: list[str]
-    mmlu_gold: list[str]
+    mmlu_logprob_prompts: list[str]  # full MMLU test set: one forward pass each
+    mmlu_logprob_gold: list[str]
+    mmlu_gen_prompts: list[str]  # MMLU_GEN_N subset: generation is the expensive protocol
+    mmlu_gen_gold: list[str]
+    train_ids_shuffled: list[list[int]] | None = None  # shuffled-answer arm only
     gen_tokens_gsm: int = 256
     gen_tokens_mmlu: int = 32
 
@@ -75,8 +78,8 @@ def run_cell(
     from peft import get_peft_model
 
     from indbw.selora.placement import lora_config
-    from indbw.selora.random_lora import delta_norms, set_matched_norm_random
-    from indbw.selora.train import TrainConfig, train_lora
+    from indbw.selora.random_lora import set_spectrum_matched_random
+    from indbw.selora.train import TrainConfig, seed_everything, train_lora
 
     layers = sorted(saes)
     ref = reference_stats(model, data.sae_ids, data.sae_attn, layers)
@@ -93,10 +96,16 @@ def run_cell(
         pm: Any = model
         row["loss_first"] = row["loss_last"] = None
     else:
+        seed_everything(cell.seed)  # PEFT draws lora_A's init here, before train_lora seeds
         pm = get_peft_model(model, lora_config(cell.layers, cell.r, cell.alpha))
+        train_ids = data.train_ids
+        if cell.arm == "shuffled_answers":
+            if data.train_ids_shuffled is None:
+                raise ValueError("shuffled_answers arm needs CellData.train_ids_shuffled")
+            train_ids = data.train_ids_shuffled
         losses = train_lora(
             pm,
-            data.train_ids,
+            train_ids,
             data.pad_id,
             TrainConfig(
                 lr=cell.lr, epochs=cell.epochs, seed=cell.seed, wall_clock_budget_s=wall_budget_s
@@ -112,12 +121,13 @@ def run_cell(
     row["gsm_correct"] = generate.gsm8k_correct_flags(
         pm, tok, data.gsm_questions, data.gsm_golds, data.gen_tokens_gsm
     )
-    row["mmlu_logprob"] = generate.mmlu_logprob_preds(pm, tok, data.mmlu_prompts)
+    row["mmlu_logprob"] = generate.mmlu_logprob_preds(pm, tok, data.mmlu_logprob_prompts)
+    row["mmlu_logprob_gold"] = data.mmlu_logprob_gold
     row["mmlu_gen"] = generate.mmlu_generation_preds(
-        pm, tok, data.mmlu_prompts, data.gen_tokens_mmlu
+        pm, tok, data.mmlu_gen_prompts, data.gen_tokens_mmlu
     )
-    row["mmlu_gold"] = data.mmlu_gold
+    row["mmlu_gen_gold"] = data.mmlu_gen_gold
     if cell.arm != "base":
-        set_matched_norm_random(pm, delta_norms(pm), seed=cell.seed + 7919)
+        set_spectrum_matched_random(pm, seed=cell.seed + 7919)
         row["fvu_rand"] = _fvu_lists(fvu_by_layer(pm, saes, data.sae_ids, data.sae_attn, ref))
     return row

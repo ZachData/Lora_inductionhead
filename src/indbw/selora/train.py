@@ -46,6 +46,32 @@ def collate(examples: list[list[int]], pad_id: int) -> dict[str, torch.Tensor]:
     return {"input_ids": ids, "attention_mask": mask, "labels": labels}
 
 
+def batch_order(
+    n_examples: int, batch_size: int, grad_accum: int, total_steps: int, seed: int
+) -> list[list[int]]:
+    """Example indices for every micro-batch, a function of (n, shape, seed) only.
+
+    Shared by every arm with the same seed (common random numbers), so arm differences
+    carry no data-order noise. Each epoch is a fresh permutation; a short tail is dropped.
+    """
+    rng = np.random.default_rng(seed)
+    out: list[list[int]] = []
+    order: list[int] = []
+    for _ in range(total_steps * grad_accum):
+        if len(order) < batch_size:
+            order = [int(i) for i in rng.permutation(n_examples)]
+        out.append(order[:batch_size])
+        order = order[batch_size:]
+    return out
+
+
+def total_steps(n_examples: int, cfg: TrainConfig) -> int:
+    if cfg.max_steps is not None:
+        return cfg.max_steps
+    per_epoch = math.ceil(n_examples / (cfg.batch_size * cfg.grad_accum))
+    return max(1, int(per_epoch * cfg.epochs))
+
+
 def train_lora(
     model: torch.nn.Module, examples: list[list[int]], pad_id: int, cfg: TrainConfig
 ) -> list[float]:
@@ -59,22 +85,18 @@ def train_lora(
         raise ValueError("no trainable parameters")
     seed_everything(cfg.seed)
     opt = torch.optim.AdamW(params, lr=cfg.lr)
-    per_epoch = math.ceil(len(examples) / (cfg.batch_size * cfg.grad_accum))
-    total = cfg.max_steps if cfg.max_steps is not None else max(1, int(per_epoch * cfg.epochs))
+    total = total_steps(len(examples), cfg)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: max(0.0, 1.0 - s / total))
-    rng = np.random.default_rng(cfg.seed)
+    batches = batch_order(len(examples), cfg.batch_size, cfg.grad_accum, total, cfg.seed)
     device = next(model.parameters()).device
     model.train()
     t0 = time.monotonic()
     losses: list[float] = []
-    order: list[int] = []
     for step in range(total):
         opt.zero_grad(set_to_none=True)
         acc = 0.0
-        for _ in range(cfg.grad_accum):
-            if len(order) < cfg.batch_size:
-                order = list(rng.permutation(len(examples)))
-            take, order = order[: cfg.batch_size], order[cfg.batch_size :]
+        for micro in range(cfg.grad_accum):
+            take = batches[step * cfg.grad_accum + micro]
             batch = {
                 k: v.to(device) for k, v in collate([examples[i] for i in take], pad_id).items()
             }

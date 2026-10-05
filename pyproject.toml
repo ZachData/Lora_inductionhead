@@ -60,6 +60,8 @@ line-length = 100
 "tests/unit/test_diagnose_g3_reachability.py" = ["E402"]
 "tests/unit/test_g0_sweep.py" = ["E402"]
 "tests/unit/test_run_g3.py" = ["E402"]
+"scripts/check_selora_metric_hash.py" = ["E402"]
+"scripts/preflight_selora.py" = ["E402"]
 "tests/unit/test_run_sweep.py" = ["E402"]
 # A one-line lambda naming the comparison under test reads better than a
 # def here; the rule is about shadowing/readability in production code.

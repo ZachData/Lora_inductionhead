@@ -16,7 +16,7 @@ from indbw.schema import record_from_dict
 from indbw.selora import analysis, evals, prereg, probes
 from indbw.selora.adjudicate import adjudicate
 from indbw.selora.placement import lora_config
-from indbw.selora.random_lora import delta_norms, set_matched_norm_random
+from indbw.selora.random_lora import set_spectrum_matched_random
 from indbw.selora.sae import content_mask, fvu_per_seq, sq_dev_per_seq
 from indbw.selora.train import TrainConfig, train_lora
 
@@ -49,7 +49,7 @@ def test_selora_end_to_end(tiny_gemma2, tiny_sae_factory) -> None:  # type: igno
     probes.spliced_ce_per_seq(pm, ids, attn, 3, saes[3])
     assert clean_ce.shape == (6,)
 
-    set_matched_norm_random(pm, delta_norms(pm), seed=1)
+    set_spectrum_matched_random(pm, seed=1)
 
     rng = np.random.default_rng(0)
     acts = saes[2].encode(ft[2][:, -1].double()).numpy()
@@ -63,26 +63,34 @@ def test_selora_end_to_end(tiny_gemma2, tiny_sae_factory) -> None:  # type: igno
     assert len(cells) == 4
 
 
-def test_run_cell_end_to_end_on_tiny_model(tiny_gemma2, tiny_sae_factory, stub_tokenizer) -> None:  # type: ignore[no-untyped-def]
+def _cell_data():  # type: ignore[no-untyped-def]
     from indbw.selora import generate
-    from indbw.selora.cells import Cell
-    from indbw.selora.pipeline import CellData, run_cell
+    from indbw.selora.pipeline import CellData
 
     g = torch.Generator().manual_seed(0)
     sae_ids = torch.randint(3, 64, (6, 10), generator=g)
     sae_ids[:, 0] = 2
-    data = CellData(
+    return CellData(
         train_ids=torch.randint(3, 64, (8, 12), generator=g).tolist(),
         pad_id=0,
         sae_ids=sae_ids,
         sae_attn=torch.ones_like(sae_ids),
         gsm_questions=["1+1?", "2+3?"],
         gsm_golds=[2.0, 5.0],
-        mmlu_prompts=[generate.mmlu_prompt("q", ["a", "b", "c", "d"])] * 3,
-        mmlu_gold=["A", "B", "C"],
+        mmlu_logprob_prompts=[generate.mmlu_prompt("q", ["a", "b", "c", "d"])] * 4,
+        mmlu_logprob_gold=["A", "B", "C", "D"],
+        mmlu_gen_prompts=[generate.mmlu_prompt("q", ["a", "b", "c", "d"])] * 3,
+        mmlu_gen_gold=["A", "B", "C"],
         gen_tokens_gsm=3,
         gen_tokens_mmlu=2,
     )
+
+
+def test_run_cell_end_to_end_on_tiny_model(tiny_gemma2, tiny_sae_factory, stub_tokenizer) -> None:  # type: ignore[no-untyped-def]
+    from indbw.selora.cells import Cell
+    from indbw.selora.pipeline import run_cell
+
+    data = _cell_data()
     saes = {li: tiny_sae_factory(seed=li) for li in range(4)}
     cell = Cell("tiny", "late", (2, 3), 0, lr=1e-2, r=2, alpha=4, epochs=0.5)
     row = run_cell(cell, tiny_gemma2, stub_tokenizer, saes, data, wall_budget_s=60.0)
@@ -94,3 +102,22 @@ def test_run_cell_end_to_end_on_tiny_model(tiny_gemma2, tiny_sae_factory, stub_t
     )
     assert row["fvu_base"]["0"] == row["fvu_ft"]["0"]  # unadapted layer: identical FVU, to the bit
     json.dumps(row)  # row must be JSON-serialisable for the append-only results file
+
+    assert len(row["mmlu_logprob"]) == 4 and len(row["mmlu_gen"]) == 3
+
+
+def test_same_cell_gives_identical_row(
+    tiny_gemma2_factory, tiny_sae_factory, stub_tokenizer
+) -> None:  # type: ignore[no-untyped-def]
+    # STATE A2 / practice 7: a record must be reproducible from its own seed, including the
+    # adapter initialisation that PEFT draws when it attaches.
+    from indbw.selora.cells import Cell
+    from indbw.selora.pipeline import run_cell
+
+    saes = {li: tiny_sae_factory(seed=li) for li in range(4)}
+    cell = Cell("tiny", "late", (2, 3), 3, lr=1e-2, r=2, alpha=4, epochs=0.5)
+    torch.manual_seed(123)  # perturb global RNG between runs: run_cell must not depend on it
+    a = run_cell(cell, tiny_gemma2_factory(), stub_tokenizer, saes, _cell_data(), 60.0)
+    torch.manual_seed(456)
+    b = run_cell(cell, tiny_gemma2_factory(), stub_tokenizer, saes, _cell_data(), 60.0)
+    assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)

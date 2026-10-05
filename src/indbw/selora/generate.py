@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+import numpy as np
 import torch
 
 from indbw.selora import evals
@@ -94,3 +95,23 @@ def gsm8k_correct_flags(
     return [
         int(evals.gsm8k_correct(evals.gsm8k_pred(t), g)) for t, g in zip(texts, golds, strict=True)
     ]
+
+
+def shuffle_answers(
+    questions: Sequence[str], answers: Sequence[str], seed: int
+) -> list[tuple[str, str]]:
+    """Pair each question with another question's answer (a seeded derangement).
+
+    The shuffled-answer control arm: same tokens, same answer format, no question-answer
+    signal. Separates "learned GSM8K" from "saw GSM8K-shaped text".
+    """
+    n = len(questions)
+    if n != len(answers) or n < 2:
+        raise ValueError("need >= 2 equal-length questions and answers")
+    rng = np.random.default_rng(seed)
+    perm = rng.permutation(n)
+    shift = int(rng.integers(1, n))
+    target = perm[(np.arange(n) + shift) % n]  # cyclic shift of a random order: no fixed points
+    deranged = np.empty(n, dtype=int)
+    deranged[perm] = target
+    return [(questions[i], answers[int(deranged[i])]) for i in range(n)]

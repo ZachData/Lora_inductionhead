@@ -8,7 +8,7 @@ import torch
 from peft import get_peft_model
 
 from indbw.selora import placement
-from indbw.selora.random_lora import delta_norms, set_matched_norm_random
+from indbw.selora.random_lora import delta_norms, set_spectrum_matched_random
 
 
 def test_named_sets_for_gemma_2b() -> None:
@@ -63,48 +63,57 @@ def test_lora_attaches_only_to_chosen_layers_and_freezes_everything_else(tiny_ge
     assert trainable and all("lora_" in n for n in trainable)  # LN, embeddings, MLP frozen
 
 
-def test_matched_norm_random_matches_norms_and_changes_direction(tiny_gemma2) -> None:  # type: ignore[no-untyped-def]
-    pm = _adapted(tiny_gemma2, (1, 2))
-    g = torch.Generator().manual_seed(0)
+def _set_trained(pm, seed: int = 0) -> None:  # type: ignore[no-untyped-def]
+    g = torch.Generator().manual_seed(seed)
     with torch.no_grad():  # stand-in for "trained": B starts at zero, so make it nonzero
         for n, p in pm.named_parameters():
             if "lora_" in n:
                 p.copy_(torch.randn(p.shape, generator=g) * 0.3)
-    target = delta_norms(pm)
-    before = {
-        n: (
-            m.scaling["default"] * (m.lora_B["default"].weight @ m.lora_A["default"].weight)
-        ).clone()
+
+
+def _deltas(pm) -> dict[str, torch.Tensor]:  # type: ignore[no-untyped-def]
+    return {
+        n: (m.scaling["default"] * (m.lora_B["default"].weight @ m.lora_A["default"].weight))
+        .detach()
+        .double()
         for n, m in pm.named_modules()
         if hasattr(m, "lora_B") and "default" in m.lora_B
     }
-    set_matched_norm_random(pm, target, seed=1)
-    after_norms = delta_norms(pm)
-    for k, v in target.items():
-        assert after_norms[k] == pytest.approx(v, rel=1e-5)  # float32 factor rescale
-    for n, m in pm.named_modules():
-        if n in before:
-            now = m.scaling["default"] * (m.lora_B["default"].weight @ m.lora_A["default"].weight)
-            cos = torch.nn.functional.cosine_similarity(now.flatten(), before[n].flatten(), dim=0)
-            assert abs(float(cos.detach())) < 0.9
-    a1 = (
-        next(m for m in pm.modules() if hasattr(m, "lora_A") and "default" in m.lora_A)
-        .lora_A["default"]
-        .weight.detach()
-        .clone()
-    )
-    set_matched_norm_random(pm, target, seed=2)
-    a2 = (
-        next(m for m in pm.modules() if hasattr(m, "lora_A") and "default" in m.lora_A)
-        .lora_A["default"]
-        .weight.detach()
-    )
-    assert not torch.equal(a1, a2)  # a different seed is a different draw
 
 
-def test_matched_norm_requires_all_modules(tiny_gemma2) -> None:  # type: ignore[no-untyped-def]
+def test_spectrum_matched_random_keeps_singular_values_and_changes_subspace(tiny_gemma2) -> None:  # type: ignore[no-untyped-def]
+    pm = _adapted(tiny_gemma2, (1, 2))
+    _set_trained(pm)
+    before = _deltas(pm)
+    set_spectrum_matched_random(pm, seed=1)
+    after = _deltas(pm)
+    r = 2
+    for n, d0 in before.items():
+        s0 = torch.linalg.svdvals(d0)[:r]
+        s1 = torch.linalg.svdvals(after[n])[:r]
+        torch.testing.assert_close(s1, s0, rtol=1e-5, atol=1e-7)  # float32 factors
+        u0 = torch.linalg.svd(d0).U[:, :r]
+        u1 = torch.linalg.svd(after[n]).U[:, :r]
+        overlap = float((u0.T @ u1).pow(2).sum()) / r  # chance level ~ r / d_out
+        assert overlap < 0.6, f"{n}: random subspace overlaps trained one ({overlap:.2f})"
+    assert delta_norms(pm).keys() == {k for k in before}
+
+
+def test_spectrum_matched_random_is_seeded(tiny_gemma2) -> None:  # type: ignore[no-untyped-def]
     pm = _adapted(tiny_gemma2, (3,))
-    with pytest.raises(KeyError):
-        set_matched_norm_random(pm, {}, seed=0)
+    _set_trained(pm)
+    snapshot = {n: p.detach().clone() for n, p in pm.named_parameters() if "lora_" in n}
+    set_spectrum_matched_random(pm, seed=5)
+    a = _deltas(pm)
+    with torch.no_grad():
+        for n, p in pm.named_parameters():
+            if n in snapshot:
+                p.copy_(snapshot[n])
+    set_spectrum_matched_random(pm, seed=5)
+    for n, d in _deltas(pm).items():
+        torch.testing.assert_close(d, a[n])
+
+
+def test_delta_norms_refuses_a_model_without_lora() -> None:
     with pytest.raises(ValueError):
-        delta_norms(torch.nn.Linear(2, 2))  # no LoRA modules: refuse, don't return {}
+        delta_norms(torch.nn.Linear(2, 2))

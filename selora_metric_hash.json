@@ -1,5 +1,5 @@
 {
-  "aggregate": "8bfac1cc88a7ecf49be576f979a8c8995b493c567f24c717e751e099b5dde4b6",
+  "aggregate": "42169afdb746623eb78d4c397f9b6db40df1591dbcda00f455c8cf219783bac0",
   "definitions": {
     "evals.py": {
       "_ANS": "8f94e333f2967360",
@@ -20,7 +20,8 @@
       "_splice": "ca1e5fa618414d49",
       "capture_resid": "0770cc11bd8664ed",
       "divergence_with_null": "70cbcaf75b340e8d",
-      "peak_layer_stability": "7af6140161d51b85",
+      "make_strata": "f63101612046e745",
+      "peak_layer_bootstrap": "17a7b9dc28feb063",
       "spliced_ce_per_seq": "05b75f7c00df8295",
       "topk_mean_abs": "94b2d59aa247e97e",
       "welch_effects": "face39eff3cd48ee"
@@ -39,7 +40,10 @@
       "Side": "5172dbb3bd179fb8",
       "_check_finite": "9c4edca6a95f713c",
       "benjamini_hochberg": "daf97d0f8472c501",
+      "bootstrap_t_pvalue": "e4ffd4769953822b",
       "cluster_bootstrap_ci": "d3daf725f9b39ec0",
+      "crossed_bootstrap_means": "3c1711d40e7aaefa",
+      "fixed_sequence_adjust": "f03990d32f0f7a0a",
       "holm": "17938cbaab39bc45",
       "mcnemar_exact_pvalue": "0bd3b2dbc2e336a2",
       "min_attainable_p": "9802f94dcb91d078",
@@ -49,5 +53,5 @@
       "sign_flip_pvalue": "f360af372a4d4b40"
     }
   },
-  "metric_version": "0.1.0"
+  "metric_version": "0.2.0"
 }

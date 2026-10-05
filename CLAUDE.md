@@ -277,6 +277,20 @@ These are not style preferences. See `PROJECT.md` §9.
 - Do not reintroduce LLC, SGLD, crosscoders, sparsity readouts, or the Markov substrate. All dropped deliberately (`PROJECT.md` §10).
 - Do not treat `sltdiff-readme.md` or any pre-2026-08 spec as authoritative. Superseded.
 
+---
+
+## Extension S (selective LoRA × SAE validity)
+
+`STATE.md` is the working checklist; `PROJECT.md` §13 holds the claims. Everything in this file applies, plus:
+
+- **Simulate before sign-off.** Every claim in `selora/prereg.py` has a planted-true / planted-false simulation test showing type-I ≤ α at the null boundary and power ≥ 0.8 under `prereg.ASSUMPTIONS`. A threshold, sample size or multiplicity change re-runs them.
+- **Multiplicity is declared per claim** (`Claim.multiplicity`) and a feasibility test proves the minimum attainable p can clear it. Never add a test to a family without re-running that check.
+- **Agent-drafted claims, thresholds, controls and statistical rules are drafts** until a human signs them off in §10.
+- **No network in `src/`.** Loaders live in `scripts/` and are labelled unverified until preflight passes on real hubs.
+- **Seed before every random draw**, including adapter initialisation; same cell → identical row is a test.
+- **No verdict on partial data**: adjudication refuses until every planned cell has a row; nobody reads per-cell results before then.
+- The induction-project "Do not" items (QK/OV single-matrix rule, frozen LN, rank sweeps, 410m) do not apply to Extension S; its own rules are in §13.
+
 ## When finishing
 
 Update the status board. Append decisions to §10, uncertainties to §11. Leave the tree clean and pushed.

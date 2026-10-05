@@ -16,6 +16,7 @@ N_LAYERS = 26
 N_ADAPT = 13
 NAMED_SEEDS = (0, 1, 2)
 RANDOM_SEED_BASE = 1000  # layer-set draws use this; training seed is separate
+INCLUDE_SHUFFLED = False  # optional shuffled-answer control arm (STATE.md C5, needs sign-off)
 
 
 @dataclass(frozen=True)
@@ -34,7 +35,9 @@ class Cell:
         return hashlib.sha256(json.dumps(asdict(self), sort_keys=True).encode()).hexdigest()[:16]
 
 
-def enumerate_cells(sae_scores: dict[str, list[float]]) -> list[Cell]:
+def enumerate_cells(
+    sae_scores: dict[str, list[float]], include_shuffled: bool = INCLUDE_SHUFFLED
+) -> list[Cell]:
     """All training cells. `sae_scores[model]` are per-layer divergence excesses frozen BEFORE training."""
     import numpy as np
 
@@ -52,6 +55,9 @@ def enumerate_cells(sae_scores: dict[str, list[float]]) -> list[Cell]:
         )
         for i, layers in enumerate(rand):
             out.append(Cell(model, f"random_{i:02d}", layers, 0))
+        if include_shuffled:
+            for s in NAMED_SEEDS:
+                out.append(Cell(model, "shuffled_answers", named["all"], s))
     if len({c.run_id for c in out}) != len(out):
         raise ValueError("duplicate run ids: two cells are identical")
     return out

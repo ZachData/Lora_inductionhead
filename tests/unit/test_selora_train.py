@@ -61,3 +61,26 @@ def test_no_trainable_params_raises(tiny_gemma2) -> None:  # type: ignore[no-unt
         p.requires_grad_(False)
     with pytest.raises(ValueError):
         train_lora(tiny_gemma2, _examples(), 0, TrainConfig(max_steps=1))
+
+
+def test_batch_order_depends_only_on_seed_and_shape() -> None:
+    from indbw.selora.train import batch_order
+
+    a = batch_order(10, 2, 2, 7, seed=3)
+    assert a == batch_order(10, 2, 2, 7, seed=3) and a != batch_order(10, 2, 2, 7, seed=4)
+    assert len(a) == 7 * 2 and all(len(b) == 2 for b in a)
+    flat = [i for b in a[:5] for i in b]
+    assert sorted(flat) == list(range(10))  # first epoch is a permutation
+
+
+def test_two_arms_see_identical_batches_for_the_same_seed(tiny_gemma2_factory) -> None:  # type: ignore[no-untyped-def]
+    # Common random numbers: arm differences must not include data-order noise.
+    seen: dict[str, list[list[int]]] = {"a": [], "b": []}
+    for key, layers in (("a", (0, 1)), ("b", (2, 3))):
+        m = tiny_gemma2_factory()
+        pm = get_peft_model(m, lora_config(layers, r=2, alpha=4, dropout=0.0))
+        m.model.embed_tokens.register_forward_pre_hook(
+            lambda _m, inp, k=key: seen[k].append(inp[0].tolist())
+        )
+        train_lora(pm, _examples(), 0, TrainConfig(batch_size=2, grad_accum=2, max_steps=3, seed=9))
+    assert seen["a"] == seen["b"] and len(seen["a"]) == 6

@@ -50,6 +50,20 @@ jobs:
       # rather than three hours into a real run.
       - run: pytest tests/property tests/smoke -q
 
+  tier2-design:
+    runs-on: ubuntu-latest
+    needs: tier1-unit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[dev]"
+      # Extension S design simulations (STATE.md practice 1): type-I at the null boundary
+      # and power under prereg.ASSUMPTIONS for every registered procedure. ~2 min, so it
+      # runs beside tier 2 rather than inside tier 1's 30 s budget.
+      - run: pytest tests/design -q
+
   tier2_5-schema-and-verdicts:
     runs-on: ubuntu-latest
     needs: tier2-property-and-smoke
