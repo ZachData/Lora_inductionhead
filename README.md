@@ -14,6 +14,10 @@ What the repo *has* produced:
 - **An ordered six-head cascade.** The bracket re-probed at `n_eval=512` across all 48 heads (`data/reprobe_merged.{json,png}`): 3.6 → 3.1 → 4.6 → 4.7 → 3.0 → 3.5 by first PMS ≥ 0.10, with the L2H1 previous-token head going 0.389 → 0.947 inside the window.
 - **A known-broken readout.** §5's copying score (full-vocab argmax hit rate) reads ≤ 2.8e-4 for every head at both checkpoints, including $B$'s L3H6, which demonstrably does induction. A known positive at the floor is a readout failure; it is parked in `REVIEW.md` because fixing it touches `METRIC_VERSION`.
 
+## Extension S: selective LoRA × SAE validity (2026-10-05)
+
+A second, independent experiment lives in `src/indbw/selora/` and `PROJECT.md` §13: where on Gemma-2-2B / 2B-it a LoRA adapter should sit (all / late / early / random / SAE-guided layers), and whether Gemma Scope SAEs still reconstruct the fine-tuned residual stream. Pre-registered claims S0–S5 with nulls, controls and machine-checked verdicts are in `selora/prereg.py` (**draft, unsigned**). The machinery is built and tested on a random Gemma2; **no real checkpoint has been run** (sandbox cannot reach huggingface.co; GPU needs a §10 sign-off). `python scripts/run_selora.py plan` enumerates the 80 cells.
+
 ## Relationship to Mets
 
 As of 2026-09-10 this project's **concepts, analysis, and artifacts were absorbed into [MetastableStateAnalysis](https://github.com/ZachData/MetastableStateAnalysis) ("Mets"), Phase 8 (`p8_scale_ladder/`)**, as the pythia-70m exploration rung of a scale ladder. See Mets `PROJECT.md` §3.9 / §3.9-A and `p8_scale_ladder/design-8.md` "Relation to the sister project" for the record of what was taken and why.

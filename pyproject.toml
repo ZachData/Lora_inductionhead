@@ -20,6 +20,8 @@ dependencies = [
     # `embed_out` — see PROJECT.md decisions log.
     "transformers==5.9.0",
     "numpy",
+    # selective-LoRA extension (PROJECT.md section 13): HF Gemma2 + PEFT adapters.
+    "peft",
 ]
 
 [project.optional-dependencies]

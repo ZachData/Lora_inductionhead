@@ -21,6 +21,8 @@ jobs:
       # METRIC_VERSION bump. Mechanism and what counts as a change:
       # src/indbw/metric_hash.py; baseline: metric_hash.json.
       - run: python scripts/check_metric_hash.py
+      # Same mechanism for the selective-LoRA metric surface (SELORA_METRIC_VERSION).
+      - run: python scripts/check_selora_metric_hash.py
 
   tier1-unit:
     runs-on: ubuntu-latest

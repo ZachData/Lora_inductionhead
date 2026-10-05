@@ -1,0 +1,53 @@
+{
+  "aggregate": "8bfac1cc88a7ecf49be576f979a8c8995b493c567f24c717e751e099b5dde4b6",
+  "definitions": {
+    "evals.py": {
+      "_ANS": "8f94e333f2967360",
+      "_LEAD": "d3e2f3b96696e780",
+      "_NUM": "2a6c9ccf4234b157",
+      "_norm_num": "12a2160ef16b620a",
+      "gsm8k_correct": "8fe76af542f3777a",
+      "gsm8k_gold": "b713023224bcaa83",
+      "gsm8k_pred": "6aa274df58cdd46f",
+      "logprob_choice": "d7a7b1cd5b21e2fc",
+      "mmlu_summary": "fd3a1b5ac0047f29",
+      "parse_choice": "088a9edb5a0c604f"
+    },
+    "probes.py": {
+      "_check_acts": "8b05bc0acc3c2a6b",
+      "_layer_list": "25103625e785e525",
+      "_out_tensor": "7ea6759999a81e50",
+      "_splice": "ca1e5fa618414d49",
+      "capture_resid": "0770cc11bd8664ed",
+      "divergence_with_null": "70cbcaf75b340e8d",
+      "peak_layer_stability": "7af6140161d51b85",
+      "spliced_ce_per_seq": "05b75f7c00df8295",
+      "topk_mean_abs": "94b2d59aa247e97e",
+      "welch_effects": "face39eff3cd48ee"
+    },
+    "sae.py": {
+      "JumpReLUSAE": "e4dc7ab09f4dbb28",
+      "_check_mask": "546edd2ec03741a1",
+      "content_mask": "0a734de6a0024e7a",
+      "fvu_per_seq": "6577c70e0143e565",
+      "l0_per_seq": "106c95a4dc641a98",
+      "load_sae_npz": "f076eb3e0c1b219e",
+      "sq_dev_per_seq": "e04abb5c557890ca",
+      "sq_error_per_seq": "1cc58b2e19e87851"
+    },
+    "stats.py": {
+      "Side": "5172dbb3bd179fb8",
+      "_check_finite": "9c4edca6a95f713c",
+      "benjamini_hochberg": "daf97d0f8472c501",
+      "cluster_bootstrap_ci": "d3daf725f9b39ec0",
+      "holm": "17938cbaab39bc45",
+      "mcnemar_exact_pvalue": "0bd3b2dbc2e336a2",
+      "min_attainable_p": "9802f94dcb91d078",
+      "one_sided_lower_bound": "53b3ede7be56acb2",
+      "one_sided_upper_bound": "c96d5396ffb545d1",
+      "rank_pvalue": "fc5d46902b7ffd94",
+      "sign_flip_pvalue": "f360af372a4d4b40"
+    }
+  },
+  "metric_version": "0.1.0"
+}
