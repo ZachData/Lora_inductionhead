@@ -70,3 +70,8 @@ line-length = 100
 [tool.mypy]
 python_version = "3.11"
 strict = true
+
+[tool.pytest.ini_options]
+# tests/unit/test_models.py and tests/integration/test_models.py share a basename and the test
+# dirs are not packages, so collecting `tests/` as a whole failed on an import mismatch.
+addopts = "--import-mode=importlib"

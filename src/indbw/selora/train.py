@@ -11,6 +11,7 @@ import math
 import random
 import time
 from dataclasses import dataclass
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -92,9 +93,10 @@ def train_lora(
     batches = batch_order(len(examples), cfg.batch_size, cfg.grad_accum, total, cfg.seed)
     device = next(model.parameters()).device
     model.train()
+    hf = cast(Any, model)  # these methods live on HF PreTrainedModel / PeftModel, not nn.Module
     if cfg.grad_checkpoint:
-        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
-        model.enable_input_require_grads()
+        hf.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+        hf.enable_input_require_grads()
     t0 = time.monotonic()
     losses: list[float] = []
     for step in range(total):
@@ -123,6 +125,6 @@ def train_lora(
         if time.monotonic() - t0 > cfg.wall_clock_budget_s:
             raise TimeoutError(f"wall-clock budget exceeded at step {step}")
     if cfg.grad_checkpoint:
-        model.gradient_checkpointing_disable()
+        hf.gradient_checkpointing_disable()
     model.eval()
     return losses
