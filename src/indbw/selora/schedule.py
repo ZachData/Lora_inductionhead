@@ -34,7 +34,9 @@ def train_seconds(arm: str, epochs: float, sec_per_step: float, n_train: int) ->
     return sec_per_step * steps_per_cell(n_train, BATCH_SIZE, GRAD_ACCUM, epochs)
 
 
-def cell_seconds(arm: str, epochs: float, sec_per_step: float, n_train: int, eval_s: float) -> float:
+def cell_seconds(
+    arm: str, epochs: float, sec_per_step: float, n_train: int, eval_s: float
+) -> float:
     """Training (analytic) plus everything else a cell does (SAE passes, GSM8K, MMLU): `eval_s`."""
     return train_seconds(arm, epochs, sec_per_step, n_train) + _positive("eval_s", eval_s)
 
@@ -94,7 +96,9 @@ def pack_runs(
     return runs
 
 
-def measured_eval_s(rows: Sequence[Mapping[str, Any]], sec_per_step: float, n_train: int) -> float | None:
+def measured_eval_s(
+    rows: Sequence[Mapping[str, Any]], sec_per_step: float, n_train: int
+) -> float | None:
     """Median non-training time per cell from finished rows; None before any row exists.
 
     Raises on a row with no timing, or whose whole wall-clock is below the analytic training

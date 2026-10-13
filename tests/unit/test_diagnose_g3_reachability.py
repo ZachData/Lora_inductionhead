@@ -44,6 +44,7 @@ def _model(seed: int) -> HookedTransformer:
         d_vocab=50,
         act_fn="relu",
         normalization_type="LN",
+        device="cpu",  # CPU-only tests: a visible GPU must not change where the toy model lives
         seed=seed,
     )
     model = HookedTransformer(cfg)
@@ -225,6 +226,7 @@ def _model6(seed: int) -> HookedTransformer:
         d_vocab=50,
         act_fn="relu",
         normalization_type="LN",
+        device="cpu",  # CPU-only tests: a visible GPU must not change where the toy model lives
         seed=seed,
     )
     model = HookedTransformer(cfg)

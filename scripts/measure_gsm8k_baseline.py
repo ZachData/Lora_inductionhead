@@ -37,8 +37,15 @@ def main() -> None:
     flags = generate.gsm8k_correct_flags(model, tok, qs, golds, 256)
     n, k = len(flags), sum(flags)
     lo, hi = wilson(k, n)
-    out = {"n": n, "correct": k, "accuracy": k / n, "wilson95": [lo, hi],
-           "first64_accuracy": sum(flags[:64]) / 64, "model": C.MODELS[1], "adapter": None}
+    out = {
+        "n": n,
+        "correct": k,
+        "accuracy": k / n,
+        "wilson95": [lo, hi],
+        "first64_accuracy": sum(flags[:64]) / 64,
+        "model": C.MODELS[1],
+        "adapter": None,
+    }
     Path("data/selora").mkdir(parents=True, exist_ok=True)
     Path("data/selora/gsm8k_baseline.json").write_text(json.dumps(out, indent=1))
     print(out)

@@ -68,7 +68,12 @@ class _LazySAEs(Mapping):  # type: ignore[type-arg]
             sae = self._cpu[li]
             self._live = (
                 li,
-                type(sae)(*(t.to(self._dev) for t in (sae.W_enc, sae.W_dec, sae.b_enc, sae.b_dec, sae.threshold))),
+                type(sae)(
+                    *(
+                        t.to(self._dev)
+                        for t in (sae.W_enc, sae.W_dec, sae.b_enc, sae.b_dec, sae.threshold)
+                    )
+                ),
             )
         return self._live[1]
 
@@ -136,8 +141,10 @@ def cmd_plan(a: argparse.Namespace) -> None:
             budget,
             first_run_reserve_s=reserve,
         )
-        print(f"\n{len(todo)} pending cells, eval {ev / 60:.0f} min/cell ({how}), "
-              f"{sec:.2f} s/step, {a.budget_hours:g} h budget, margin {schedule.MARGIN}: {len(runs)} runs")
+        print(
+            f"\n{len(todo)} pending cells, eval {ev / 60:.0f} min/cell ({how}), "
+            f"{sec:.2f} s/step, {a.budget_hours:g} h budget, margin {schedule.MARGIN}: {len(runs)} runs"
+        )
         for i, r in enumerate(runs, 1):
             h = sum(schedule.cell_seconds(c.arm, c.epochs, sec, n, ev) for c in r) / 3600.0
             first = f"{r[0].arm}/{r[0].seed}"
@@ -264,7 +271,9 @@ def cmd_cell(a: argparse.Namespace) -> None:
 
     t_start = time.monotonic()
     prereg.require_registered()
-    todo = schedule.order_cells(C.pending(C.enumerate_cells(_scores(Path(a.div_dir))), OUT / "cells.jsonl"))
+    todo = schedule.order_cells(
+        C.pending(C.enumerate_cells(_scores(Path(a.div_dir))), OUT / "cells.jsonl")
+    )
     print(f"{len(todo)} cells pending")
     sec, n, budget = _sec_per_step(a), schedule.GSM8K_TRAIN_N, a.budget_hours * 3600.0
     rows = _rows()
@@ -278,8 +287,10 @@ def cmd_cell(a: argparse.Namespace) -> None:
         if eval_s is not None:
             need = schedule.cell_seconds(cell.arm, cell.epochs, sec, n, eval_s)
             if not schedule.may_start(elapsed, need, budget):
-                print(f"stop: {cell.arm}/{cell.seed} needs ~{need / 3600:.2f} h x {schedule.MARGIN}, "
-                      f"{(budget - elapsed) / 3600:.2f} h left of {a.budget_hours:g}")
+                print(
+                    f"stop: {cell.arm}/{cell.seed} needs ~{need / 3600:.2f} h x {schedule.MARGIN}, "
+                    f"{(budget - elapsed) / 3600:.2f} h left of {a.budget_hours:g}"
+                )
                 break
         t0 = time.monotonic()
         tok, model = _load_model(cell.model)  # fresh weights per cell: run_cell consumes the model
@@ -287,9 +298,13 @@ def cmd_cell(a: argparse.Namespace) -> None:
             cache["data"] = _cell_data(tok)
             cache["saes"] = _load_saes(list(range(C.N_LAYERS)))
             if len(cache["data"].train_ids) != n:
-                raise ValueError(f"train set has {len(cache['data'].train_ids)} items, schedule assumes {n}")
+                raise ValueError(
+                    f"train set has {len(cache['data'].train_ids)} items, schedule assumes {n}"
+                )
         data, saes = cache["data"], cache["saes"]
-        row = run_cell(cell, model, tok, saes, data, wall_budget_s=budget - (time.monotonic() - t_start))
+        row = run_cell(
+            cell, model, tok, saes, data, wall_budget_s=budget - (time.monotonic() - t_start)
+        )
         row["wall_clock_s"] = time.monotonic() - t0
         OUT.mkdir(parents=True, exist_ok=True)
         with (OUT / "cells.jsonl").open("a") as f:
@@ -297,8 +312,10 @@ def cmd_cell(a: argparse.Namespace) -> None:
             f.flush()
         rows.append(row)
         done += 1
-        print(f"{cell.arm}/{cell.seed}: {row['wall_clock_s'] / 3600:.2f} h  "
-              f"({done} this run, {len(todo) - done} pending)")
+        print(
+            f"{cell.arm}/{cell.seed}: {row['wall_clock_s'] / 3600:.2f} h  "
+            f"({done} this run, {len(todo) - done} pending)"
+        )
         del model, row
         _free_gpu()
 
@@ -330,15 +347,27 @@ def cmd_adjudicate(a: argparse.Namespace) -> None:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="stage", required=True)
+
     def timing(p: argparse.ArgumentParser) -> None:
         p.add_argument("--budget-hours", type=float, default=8.0)
-        p.add_argument("--sec-per-step", type=float, default=None, help="default: data/selora/preflight.json")
-        p.add_argument("--eval-minutes", type=float, default=None, help="non-training minutes per cell; default: measured")
+        p.add_argument(
+            "--sec-per-step", type=float, default=None, help="default: data/selora/preflight.json"
+        )
+        p.add_argument(
+            "--eval-minutes",
+            type=float,
+            default=None,
+            help="non-training minutes per cell; default: measured",
+        )
 
     pl = sub.add_parser("plan")
     timing(pl)
-    pl.add_argument("--first-run-reserve-hours", type=float, default=1.0,
-                    help="held back from run 1 for the divergence stage (unmeasured assumption)")
+    pl.add_argument(
+        "--first-run-reserve-hours",
+        type=float,
+        default=1.0,
+        help="held back from run 1 for the divergence stage (unmeasured assumption)",
+    )
     pl.set_defaults(fn=cmd_plan)
     d = sub.add_parser("divergence")
     d.add_argument("--model", required=True, choices=list(C.MODELS))

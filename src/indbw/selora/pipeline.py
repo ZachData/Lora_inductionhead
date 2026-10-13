@@ -113,7 +113,11 @@ class CellData:
 
 
 def max_abs_resid_diff(
-    pm: Any, ids: torch.Tensor, attn: torch.Tensor, layers: Sequence[int], budget: int = TOKEN_BUDGET
+    pm: Any,
+    ids: torch.Tensor,
+    attn: torch.Tensor,
+    layers: Sequence[int],
+    budget: int = TOKEN_BUDGET,
 ) -> dict[str, float]:
     """Per-layer max |resid(adapted) - resid(base)|: proves the adapter changed the stream.
 

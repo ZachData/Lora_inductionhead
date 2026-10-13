@@ -25,6 +25,7 @@ def tiny_model() -> HookedTransformer:
         d_vocab=50,
         act_fn="relu",
         normalization_type="LN",
+        device="cpu",  # CPU-only tests: a visible GPU must not change where the toy model lives
         seed=0,
     )
     model = HookedTransformer(cfg)

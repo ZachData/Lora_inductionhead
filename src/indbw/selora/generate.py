@@ -47,9 +47,7 @@ def _encode_batch(
     return {k: v.to(device) for k, v in enc.items()}
 
 
-def _length_batches(
-    tok: Any, prompts: Sequence[str], max_bs: int, budget: int
-) -> list[list[int]]:
+def _length_batches(tok: Any, prompts: Sequence[str], max_bs: int, budget: int) -> list[list[int]]:
     """Prompt indices grouped by length, each batch within `max_bs` rows and `budget` padded
     tokens. Memory only: a prediction depends on its own prompt, and callers restore item order."""
     lens = [len(x) for x in tok(list(prompts))["input_ids"]]

@@ -149,9 +149,7 @@ def test_shuffled_arm_is_optional_and_off_by_default() -> None:
     assert all(c.layers == tuple(range(cells.N_LAYERS)) for c in shuffled)
 
 
-def test_budgeted_reference_and_fvu_match_single_pass(
-    tiny_gemma2, tiny_sae_factory
-) -> None:  # type: ignore[no-untyped-def]
+def test_budgeted_reference_and_fvu_match_single_pass(tiny_gemma2, tiny_sae_factory) -> None:  # type: ignore[no-untyped-def]
     g = torch.Generator().manual_seed(3)
     ids = torch.randint(3, 64, (7, 9), generator=g)
     ids[:, 0] = 2

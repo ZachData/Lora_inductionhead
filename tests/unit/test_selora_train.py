@@ -86,7 +86,7 @@ def test_two_arms_see_identical_batches_for_the_same_seed(tiny_gemma2_factory) -
             pm,
             _examples(),
             0,
-            TrainConfig(batch_size=2, grad_accum=2, max_steps=3, seed=9, sub_batch=2)
+            TrainConfig(batch_size=2, grad_accum=2, max_steps=3, seed=9, sub_batch=2),
         )
     assert seen["a"] == seen["b"] and len(seen["a"]) == 6
 
@@ -118,7 +118,12 @@ def test_gradient_checkpointing_is_the_same_gradient(tiny_gemma2_factory) -> Non
         torch.manual_seed(0)
         pm = get_peft_model(m, lora_config((0, 1), r=2, alpha=4, dropout=0.0))
         cfg = TrainConfig(lr=1e-2, batch_size=4, grad_accum=1, max_steps=3, grad_checkpoint=ck)
-        out.append((train_lora(pm, ex, 0, cfg), [p.detach().clone() for p in pm.parameters() if p.requires_grad]))
+        out.append(
+            (
+                train_lora(pm, ex, 0, cfg),
+                [p.detach().clone() for p in pm.parameters() if p.requires_grad],
+            )
+        )
     # recomputation replays the same fp32 ops: agreement to ~1e-6
     assert out[0][0] == pytest.approx(out[1][0], rel=1e-5)
     for a, b in zip(out[0][1], out[1][1], strict=True):
