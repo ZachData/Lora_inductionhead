@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import platform
 from pathlib import Path
 from typing import Final
 
@@ -18,6 +19,9 @@ from indbw.selora.prereg import SELORA_METRIC_VERSION
 
 SELORA_METRIC_MODULES: Final[tuple[str, ...]] = ("sae.py", "probes.py", "evals.py", "stats.py")
 SRC: Final[Path] = Path(__file__).resolve().parent
+#: ast.dump is not stable across Python versions, so a lock is only comparable on the interpreter
+#: that wrote it (same hazard as indbw.metric_hash; CI runs 3.11).
+PYTHON: Final[str] = ".".join(platform.python_version_tuple()[:2])
 LOCK: Final[Path] = Path(__file__).resolve().parents[3] / "selora_metric_hash.json"
 
 
@@ -31,6 +35,7 @@ def compute() -> dict[str, object]:
     }
     return {
         "metric_version": SELORA_METRIC_VERSION,
+        "python_version": PYTHON,
         "aggregate": hashlib.sha256(json.dumps(defs, sort_keys=True).encode()).hexdigest(),
         "definitions": defs,
     }
@@ -48,6 +53,14 @@ def check() -> list[str]:
         for n, h in d.items()
         if lock["definitions"].get(m, {}).get(n) != h
     )
+    lock_py = lock.get("python_version", "unknown")
+    if lock_py != "unknown" and lock_py != PYTHON:
+        return [
+            f"selora metric hash differs, but the lock was written under Python {lock_py} and this "
+            f"is {PYTHON}: ast.dump is not stable across versions, so this may be skew, not a "
+            f"change. Re-run under Python {lock_py}. Do not bump SELORA_METRIC_VERSION or "
+            "regenerate the lock from this interpreter."
+        ]
     if cur["metric_version"] == lock["metric_version"]:
         return [
             f"selora metric definitions changed ({changed}) without bumping SELORA_METRIC_VERSION"
@@ -56,4 +69,11 @@ def check() -> list[str]:
 
 
 def update() -> None:
+    if LOCK.exists():
+        lock_py = json.loads(LOCK.read_text()).get("python_version", "unknown")
+        if lock_py != "unknown" and lock_py != PYTHON:
+            raise ValueError(
+                f"refusing to regenerate: the lock was written under Python {lock_py}, this is "
+                f"{PYTHON}. Run --update under {lock_py} so the baseline is not skewed."
+            )
     LOCK.write_text(json.dumps(compute(), indent=2, sort_keys=True) + "\n")
