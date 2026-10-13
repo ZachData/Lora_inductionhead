@@ -58,10 +58,10 @@ Legend: [x] done (tested offline) · [ ] open · [~] provisioned (written, canno
 
 ### E. Needs a human
 - [ ] E1 Sign off §13.4 claims, thresholds, multiplicity rules, assumptions (→ §10, flip `PREREG_STATUS`)
-- [ ] E2 Allow `huggingface.co` (and optionally `neuronpedia.org`); HF token with Gemma licence
-- [ ] E3 GPU sign-off in §10 (first use: preflight + 20-step timing probe)
-- [ ] E5 Approve the lean design in G (or ask for the base-model S3 replication back)
-- [ ] E4 Decide whether C5 (shuffled-answer arm) is in the registered design
+- [x] E2 (resolved: preflight reached both hubs 2026-10-13) Allow `huggingface.co` (and optionally `neuronpedia.org`); HF token with Gemma licence
+- [x] E3 GPU sign-off in §10 (local RTX 3080; approved 2026-10-13)
+- [x] E5 Lean design in G approved (2026-10-13, §10)
+- [x] E4 C5 (shuffled-answer arm) not in the registered design (2026-10-13, §10)
 
 ### G. Lean design (2026-10-13, proposed; E5 decides)
 - [x] G1 CI: `transformer_lens<4` (4.0.0 removed `loading_from_pretrained`)
