@@ -47,6 +47,25 @@ def _encode_batch(
     return {k: v.to(device) for k, v in enc.items()}
 
 
+def _length_batches(
+    tok: Any, prompts: Sequence[str], max_bs: int, budget: int
+) -> list[list[int]]:
+    """Prompt indices grouped by length, each batch within `max_bs` rows and `budget` padded
+    tokens. Memory only: a prediction depends on its own prompt, and callers restore item order."""
+    lens = [len(x) for x in tok(list(prompts))["input_ids"]]
+    order = sorted(range(len(prompts)), key=lambda i: lens[i])
+    batches: list[list[int]] = []
+    for i in order:
+        if batches and len(batches[-1]) < max_bs and (len(batches[-1]) + 1) * lens[i] <= budget:
+            batches[-1].append(i)
+        else:
+            batches.append([i])
+    return batches
+
+
+TOKEN_BUDGET = 3000  # padded prompt tokens per forward pass on a 10 GB card (eager attention)
+
+
 @torch.no_grad()
 def mmlu_logprob_preds(
     model: Any, tok: Any, prompts: Sequence[str], batch_size: int = 8
@@ -54,12 +73,17 @@ def mmlu_logprob_preds(
     """Format-free MMLU: argmax over the four option-letter next-token log-probs."""
     opt = option_token_ids(tok)
     device = next(model.parameters()).device
-    out: list[str] = []
-    for i in range(0, len(prompts), batch_size):
-        enc = _encode_batch(tok, prompts[i : i + batch_size], device, "left")
-        logits = model(**enc).logits[:, -1].float()
-        lp = torch.log_softmax(logits, dim=-1)[:, opt]
-        out.extend(evals.logprob_choice(row.tolist()) for row in lp)
+    out: list[str] = [""] * len(prompts)
+    for idx in _length_batches(tok, prompts, batch_size, TOKEN_BUDGET):
+        enc = _encode_batch(tok, [prompts[i] for i in idx], device, "left")
+        # Option logits in fp32 from the final (post-norm) hidden state. bf16 logits are coarse
+        # enough to tie two letters exactly; the argmax over four options needs neither the
+        # vocabulary normaliser nor the (monotone) final softcap, so neither is computed.
+        h = model(**enc, output_hidden_states=True, logits_to_keep=1).hidden_states[-1][:, -1]
+        w = model.get_output_embeddings().weight[opt]
+        lp = h.float() @ w.float().T
+        for i, row in zip(idx, lp, strict=True):
+            out[i] = evals.logprob_choice(row.tolist())
     return out
 
 
@@ -68,12 +92,13 @@ def generate_texts(
     model: Any, tok: Any, prompts: Sequence[str], max_new_tokens: int, batch_size: int = 8
 ) -> list[str]:
     device = next(model.parameters()).device
-    out: list[str] = []
-    for i in range(0, len(prompts), batch_size):
-        enc = _encode_batch(tok, prompts[i : i + batch_size], device, "left")
+    out: list[str] = [""] * len(prompts)
+    for idx in _length_batches(tok, prompts, batch_size, TOKEN_BUDGET):
+        enc = _encode_batch(tok, [prompts[i] for i in idx], device, "left")
         gen = model.generate(**enc, max_new_tokens=max_new_tokens, do_sample=False)
         new = gen[:, enc["input_ids"].shape[1] :]
-        out.extend(tok.batch_decode(new, skip_special_tokens=True))
+        for i, text in zip(idx, tok.batch_decode(new, skip_special_tokens=True), strict=True):
+            out[i] = text
     return out
 
 

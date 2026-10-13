@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,16 @@ from indbw.selora import prereg
 OUT = Path("data/selora")
 MMLU_SEED = 0
 SAE_PROMPTS_PER_CLASS = 512
+
+
+def _free_gpu(*_: Any) -> None:
+    import gc
+
+    import torch
+
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 def _load_model(name: str):  # type: ignore[no-untyped-def]
@@ -43,6 +54,31 @@ def _load_model(name: str):  # type: ignore[no-untyped-def]
     return tok, model
 
 
+class _LazySAEs(Mapping):  # type: ignore[type-arg]
+    """SAEs held on CPU; one layer is moved to the GPU at a time (26 fp32 SAEs are ~7.8 GB,
+    which does not fit beside the model on a 10 GB card). Values are unchanged, only placement."""
+
+    def __init__(self, cpu: dict) -> None:  # type: ignore[type-arg]
+        self._cpu = cpu
+        self._dev = "cuda" if __import__("torch").cuda.is_available() else "cpu"
+        self._live: tuple[int, Any] | None = None
+
+    def __getitem__(self, li: int):  # type: ignore[no-untyped-def]
+        if self._live is None or self._live[0] != li:
+            sae = self._cpu[li]
+            self._live = (
+                li,
+                type(sae)(*(t.to(self._dev) for t in (sae.W_enc, sae.W_dec, sae.b_enc, sae.b_dec, sae.threshold))),
+            )
+        return self._live[1]
+
+    def __iter__(self):  # type: ignore[no-untyped-def]
+        return iter(sorted(self._cpu))
+
+    def __len__(self) -> int:
+        return len(self._cpu)
+
+
 def _load_saes(layers: list[int]):  # type: ignore[no-untyped-def]
     import torch
     from huggingface_hub import hf_hub_download, list_repo_files
@@ -50,15 +86,11 @@ def _load_saes(layers: list[int]):  # type: ignore[no-untyped-def]
     from indbw.selora.sae import load_sae_npz
 
     files = list_repo_files(C.SAE_REPO)
-    dev = "cuda" if torch.cuda.is_available() else "cpu"
     out = {}
     for li in layers:
         path = hf_hub_download(C.SAE_REPO, C.pick_sae_path(files, li))
-        sae = load_sae_npz(path, dtype=torch.float32)
-        out[li] = type(sae)(
-            *(t.to(dev) for t in (sae.W_enc, sae.W_dec, sae.b_enc, sae.b_dec, sae.threshold))
-        )
-    return out
+        out[li] = load_sae_npz(path, dtype=torch.float32)
+    return _LazySAEs(out)
 
 
 def cmd_plan(_: argparse.Namespace) -> None:
@@ -201,6 +233,8 @@ def cmd_cell(a: argparse.Namespace) -> None:
         with (OUT / "cells.jsonl").open("a") as f:
             f.write(json.dumps(row, sort_keys=True) + "\n")
             f.flush()
+        del model, row
+        _free_gpu()
 
 
 def cmd_adjudicate(a: argparse.Namespace) -> None:

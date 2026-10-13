@@ -53,7 +53,7 @@ def capture_resid(
             )
         )
     try:
-        model(input_ids=input_ids, attention_mask=attention_mask)
+        model(input_ids=input_ids, attention_mask=attention_mask, logits_to_keep=1)  # logits unused
     finally:
         for h in handles:
             h.remove()

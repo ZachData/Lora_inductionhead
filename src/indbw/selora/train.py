@@ -25,6 +25,8 @@ class TrainConfig:
     max_steps: int | None = None  # optimiser steps; hard cap independent of epochs
     wall_clock_budget_s: float = 6 * 3600.0
     seed: int = 0
+    grad_checkpoint: bool = True  # recompute activations in backward: memory only, same gradient
+    sub_batch: int = 1  # examples per forward pass inside a micro-batch; memory only, same gradient
 
 
 def seed_everything(seed: int) -> None:
@@ -90,6 +92,9 @@ def train_lora(
     batches = batch_order(len(examples), cfg.batch_size, cfg.grad_accum, total, cfg.seed)
     device = next(model.parameters()).device
     model.train()
+    if cfg.grad_checkpoint:
+        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+        model.enable_input_require_grads()
     t0 = time.monotonic()
     losses: list[float] = []
     for step in range(total):
@@ -100,16 +105,24 @@ def train_lora(
             batch = {
                 k: v.to(device) for k, v in collate([examples[i] for i in take], pad_id).items()
             }
-            loss = model(**batch).loss / cfg.grad_accum
-            if not torch.isfinite(loss):
-                raise FloatingPointError(f"non-finite loss at optimiser step {step}")
-            loss.backward()
-            acc += float(loss.detach())
+            n_full = int((batch["labels"][:, 1:] != -100).sum())
+            for lo in range(0, len(take), cfg.sub_batch):
+                sub = {k: v[lo : lo + cfg.sub_batch] for k, v in batch.items()}
+                # HF's loss is a mean over label tokens; weighting by token share makes the sum
+                # over sub-batches equal the loss of the whole micro-batch
+                w = int((sub["labels"][:, 1:] != -100).sum()) / n_full
+                loss = model(**sub).loss * w / cfg.grad_accum
+                if not torch.isfinite(loss):
+                    raise FloatingPointError(f"non-finite loss at optimiser step {step}")
+                loss.backward()
+                acc += float(loss.detach())
         torch.nn.utils.clip_grad_norm_(params, 1.0)
         opt.step()
         sched.step()
         losses.append(acc)
         if time.monotonic() - t0 > cfg.wall_clock_budget_s:
             raise TimeoutError(f"wall-clock budget exceeded at step {step}")
+    if cfg.grad_checkpoint:
+        model.gradient_checkpointing_disable()
     model.eval()
     return losses

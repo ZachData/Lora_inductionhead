@@ -13,18 +13,62 @@ from indbw.selora.cells import Cell
 from indbw.selora.sae import JumpReLUSAE, content_mask, fvu_per_seq, sq_dev_per_seq
 
 
-def reference_stats(
-    base_model: Any, ids: torch.Tensor, attn: torch.Tensor, layers: Sequence[int]
-) -> dict[int, tuple[torch.Tensor, torch.Tensor]]:
-    """Per-layer (mu, den) from the *base* model: the shared FVU scale for base and fine-tuned."""
-    mask = content_mask(attn)
-    cap = probes.capture_resid(base_model, ids, attn, layers)
-    out = {}
-    for li in layers:
-        x = cap[li].double()
-        mu = x[mask].mean(0)
-        out[li] = (mu, sq_dev_per_seq(x, mu, mask))
+TOKEN_BUDGET = 2000  # padded tokens per forward pass: bounds activation memory on a 10 GB card
+
+
+def _batches(attn: torch.Tensor, budget: int) -> list[tuple[torch.Tensor, int]]:
+    """Index batches over prompts sorted by length, each with its trim length.
+
+    Padding is on the right and attention is causal, so trimming a batch to its longest real prompt
+    changes no per-sequence value; it only removes padding compute. Sorting keeps batches tight."""
+    lens = attn.sum(1)
+    order = torch.argsort(lens, stable=True).cpu()
+    lens = lens.cpu()
+    out: list[tuple[torch.Tensor, int]] = []
+    i = 0
+    while i < len(order):
+        j = i + 1
+        while j < len(order) and (j + 1 - i) * int(lens[order[j]]) <= budget:
+            j += 1
+        idx = order[i:j]
+        out.append((idx, int(lens[idx].max())))
+        i = j
     return out
+
+
+def reference_stats(
+    base_model: Any,
+    ids: torch.Tensor,
+    attn: torch.Tensor,
+    layers: Sequence[int],
+    budget: int = TOKEN_BUDGET,
+) -> dict[int, tuple[torch.Tensor, torch.Tensor]]:
+    """Per-layer (mu, den) from the *base* model: the shared FVU scale for base and fine-tuned.
+
+    Two passes over batches: mu is the mean over every content token of every prompt, so it needs
+    the whole set before any per-sequence deviation can be taken."""
+    dev = next(base_model.parameters()).device
+    ids, attn = ids.to(dev), attn.to(dev)
+    mask = content_mask(attn)
+    batches = _batches(attn, budget)
+    total: dict[int, torch.Tensor] = {}
+    count = 0
+    for idx, T in batches:
+        cap = probes.capture_resid(base_model, ids[idx, :T], attn[idx, :T], list(layers))
+        m = mask[idx, :T]
+        count += int(m.sum())
+        for li in layers:
+            x = cap[li].double()[m].sum(0)
+            total[li] = x if li not in total else total[li] + x
+    mus = {li: total[li] / count for li in layers}
+    dens = {li: torch.zeros(len(ids), dtype=torch.float64, device=mus[li].device) for li in layers}
+    for idx, T in batches:
+        cap = probes.capture_resid(base_model, ids[idx, :T], attn[idx, :T], list(layers))
+        for li in layers:
+            dens[li][idx.to(dens[li].device)] = sq_dev_per_seq(
+                cap[li].double(), mus[li], mask[idx, :T]
+            )
+    return {li: (mus[li], dens[li]) for li in layers}
 
 
 def fvu_by_layer(
@@ -33,10 +77,20 @@ def fvu_by_layer(
     ids: torch.Tensor,
     attn: torch.Tensor,
     ref: Mapping[int, tuple[torch.Tensor, torch.Tensor]],
+    budget: int = TOKEN_BUDGET,
 ) -> dict[int, torch.Tensor]:
+    dev = next(model.parameters()).device
+    ids, attn = ids.to(dev), attn.to(dev)
     mask = content_mask(attn)
-    cap = probes.capture_resid(model, ids, attn, list(saes))
-    return {li: fvu_per_seq(cap[li].double(), saes[li], mask, *ref[li]) for li in saes}
+    out = {li: torch.zeros(len(ids), dtype=torch.float64, device=ref[li][1].device) for li in saes}
+    for idx, T in _batches(attn, budget):
+        cap = probes.capture_resid(model, ids[idx, :T], attn[idx, :T], list(saes))
+        for li in saes:
+            mu, den = ref[li]
+            di = idx.to(den.device)
+            out[li][di] = fvu_per_seq(cap[li].double(), saes[li], mask[idx, :T], mu, den[di])
+        del cap
+    return out
 
 
 @dataclass(frozen=True)
@@ -56,6 +110,29 @@ class CellData:
     train_ids_shuffled: list[list[int]] | None = None  # shuffled-answer arm only
     gen_tokens_gsm: int = 256
     gen_tokens_mmlu: int = 32
+
+
+def max_abs_resid_diff(
+    pm: Any, ids: torch.Tensor, attn: torch.Tensor, layers: Sequence[int], budget: int = TOKEN_BUDGET
+) -> dict[str, float]:
+    """Per-layer max |resid(adapted) - resid(base)|: proves the adapter changed the stream.
+
+    Base residuals come from the same weights with the adapter disabled, batch by batch, so no
+    full-set copy is held (26 layers x all prompts does not fit in memory). A model with no
+    adapter (the base arm) is compared with itself and gives exactly 0."""
+    dev = next(pm.parameters()).device
+    ids, attn = ids.to(dev), attn.to(dev)
+    out = {str(li): 0.0 for li in layers}
+    for idx, T in _batches(attn, budget):
+        ft = probes.capture_resid(pm, ids[idx, :T], attn[idx, :T], list(layers))
+        if hasattr(pm, "disable_adapter"):
+            with pm.disable_adapter():
+                base = probes.capture_resid(pm, ids[idx, :T], attn[idx, :T], list(layers))
+        else:
+            base = probes.capture_resid(pm, ids[idx, :T], attn[idx, :T], list(layers))
+        for li in layers:
+            out[str(li)] = max(out[str(li)], float((ft[li] - base[li]).abs().max()))
+    return out
 
 
 def _fvu_lists(f: Mapping[int, torch.Tensor]) -> dict[str, list[float]]:
@@ -84,8 +161,6 @@ def run_cell(
     layers = sorted(saes)
     ref = reference_stats(model, data.sae_ids, data.sae_attn, layers)
     base_fvu = fvu_by_layer(model, saes, data.sae_ids, data.sae_attn, ref)
-    base_resid = probes.capture_resid(model, data.sae_ids, data.sae_attn, layers)
-    base_resid = {k: v.clone() for k, v in base_resid.items()}
 
     row: dict[str, Any] = {
         "run_id": cell.run_id,
@@ -113,10 +188,7 @@ def run_cell(
         )
         row["loss_first"], row["loss_last"] = losses[0], losses[-1]
 
-    ft_resid = probes.capture_resid(pm, data.sae_ids, data.sae_attn, layers)
-    row["resid_max_abs_diff"] = {
-        str(li): float((ft_resid[li] - base_resid[li]).abs().max()) for li in layers
-    }
+    row["resid_max_abs_diff"] = max_abs_resid_diff(pm, data.sae_ids, data.sae_attn, layers)
     row["fvu_ft"] = _fvu_lists(fvu_by_layer(pm, saes, data.sae_ids, data.sae_attn, ref))
     row["gsm_correct"] = generate.gsm8k_correct_flags(
         pm, tok, data.gsm_questions, data.gsm_golds, data.gen_tokens_gsm

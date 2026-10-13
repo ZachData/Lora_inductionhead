@@ -17,7 +17,7 @@ from typing import Final, Literal
 from indbw.schema import Criterion
 from indbw.selora.stats import min_attainable_p
 
-SELORA_METRIC_VERSION: Final[str] = "0.2.0"
+SELORA_METRIC_VERSION: Final[str] = "0.2.5"
 PREREG_STATUS: Final[str] = "draft"
 
 ALPHA: Final[float] = 0.05

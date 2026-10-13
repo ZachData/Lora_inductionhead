@@ -53,8 +53,9 @@ def set_spectrum_matched_random(model: torch.nn.Module, seed: int) -> None:
         scale = float(mod.scaling["default"])
         r = a.shape[0]
         sv = torch.linalg.svdvals(scale * (b.double() @ a.double()))[:r]
-        qu = _orthonormal(b.shape[0], r, g)
-        qv = _orthonormal(a.shape[1], r, g)
+        # drawn on CPU so the stream is device-independent, then moved
+        qu = _orthonormal(b.shape[0], r, g).to(sv.device)
+        qv = _orthonormal(a.shape[1], r, g).to(sv.device)
         root = torch.sqrt(sv / scale)
         b.copy_((qu * root).to(b.dtype))
         a.copy_((root[:, None] * qv.T).to(a.dtype))

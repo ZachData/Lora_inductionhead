@@ -64,6 +64,10 @@ def main() -> int:
     report["sec_per_step"] = sec
     report["sweep_hours_1gpu"] = P.estimate_sweep_hours(sec, steps, n_cells, 1)
 
+    del pm
+    R._free_gpu(model)
+    del model
+    R._free_gpu()
     tok, model = R._load_model(model_id)
     small = type(data)(
         **{

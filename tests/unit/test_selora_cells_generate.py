@@ -147,3 +147,41 @@ def test_shuffled_arm_is_optional_and_off_by_default() -> None:
         cells.NAMED_SEEDS
     )
     assert all(c.layers == tuple(range(cells.N_LAYERS)) for c in shuffled)
+
+
+def test_budgeted_reference_and_fvu_match_single_pass(
+    tiny_gemma2, tiny_sae_factory
+) -> None:  # type: ignore[no-untyped-def]
+    g = torch.Generator().manual_seed(3)
+    ids = torch.randint(3, 64, (7, 9), generator=g)
+    ids[:, 0] = 2
+    attn = torch.ones_like(ids)
+    attn[3:, 6:] = 0  # ragged lengths, so chunk boundaries cut through padding
+    saes = {1: tiny_sae_factory(seed=1), 2: tiny_sae_factory(seed=2)}
+    one = pipeline.reference_stats(tiny_gemma2, ids, attn, [1, 2], budget=10**9)
+    many = pipeline.reference_stats(tiny_gemma2, ids, attn, [1, 2], budget=20)
+    f1 = pipeline.fvu_by_layer(tiny_gemma2, saes, ids, attn, one, budget=10**9)
+    f2 = pipeline.fvu_by_layer(tiny_gemma2, saes, ids, attn, many, budget=20)
+    for li in (1, 2):
+        # the fp32 forward pass differs by ~1e-6 relative across batch shapes (different kernels /
+        # padding), so agreement is to ~10x that, not to float64 precision
+        torch.testing.assert_close(one[li][0], many[li][0], rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(one[li][1], many[li][1], rtol=1e-5, atol=0)
+        torch.testing.assert_close(f1[li], f2[li], rtol=1e-4, atol=0)
+
+
+def test_mmlu_option_logits_pick_the_same_letter_as_full_vocab_argmax(
+    tiny_gemma2, stub_tokenizer
+) -> None:  # type: ignore[no-untyped-def]
+    tok = stub_tokenizer
+    prompts = [generate.mmlu_prompt(f"question {i}", ["aa", "bb", "cc", "dd"]) for i in range(6)]
+    got = generate.mmlu_logprob_preds(tiny_gemma2, tok, prompts, batch_size=3)
+    opt = generate.option_token_ids(tok)
+    ref = []
+    for p in prompts:
+        tok.padding_side = "left"
+        enc = tok([p], return_tensors="pt", padding=True)
+        with torch.no_grad():
+            lg = tiny_gemma2(**enc).logits[0, -1].float()
+        ref.append("ABCD"[int(torch.argmax(lg[opt]))])
+    assert got == ref
