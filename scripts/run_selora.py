@@ -1,8 +1,8 @@
 """Selective-LoRA x SAE-validity runner (PROJECT.md section 13).
 
-  python scripts/run_selora.py plan                       # enumerate cells; no network, no model
+  python scripts/run_selora.py plan [--budget-hours 8]    # enumerate cells and cut them into runs
   python scripts/run_selora.py divergence --model <id> --out data/selora/divergence_<id with / -> _>.json
-  python scripts/run_selora.py cell --div-dir data/selora [--limit N]
+  python scripts/run_selora.py cell --div-dir data/selora [--budget-hours 8] [--limit N]
   python scripts/run_selora.py adjudicate --div-dir data/selora --eval-set-hash <h>   # once, complete sweep
 
 `divergence` and `cell` refuse to run while prereg.PREREG_STATUS == "draft". Results are appended
@@ -24,7 +24,7 @@ from typing import Any
 import numpy as np
 
 from indbw.selora import cells as C
-from indbw.selora import prereg
+from indbw.selora import prereg, schedule
 
 OUT = Path("data/selora")
 MMLU_SEED = 0
@@ -93,14 +93,56 @@ def _load_saes(layers: list[int]):  # type: ignore[no-untyped-def]
     return _LazySAEs(out)
 
 
-def cmd_plan(_: argparse.Namespace) -> None:
-    fake = {m: list(np.linspace(0, 1, C.N_LAYERS)) for m in C.MODELS}  # placeholder scores
-    cs = C.enumerate_cells(fake)
+def _rows() -> list[dict[str, Any]]:
+    p = OUT / "cells.jsonl"
+    return [json.loads(x) for x in p.read_text().splitlines() if x.strip()] if p.exists() else []
+
+
+def _sec_per_step(a: argparse.Namespace) -> float:
+    if a.sec_per_step is not None:
+        return float(a.sec_per_step)
+    return float(json.loads((OUT / "preflight.json").read_text())["sec_per_step"])
+
+
+def cmd_plan(a: argparse.Namespace) -> None:
+    """Pending cells in execution order, cut into runs of at most --budget-hours."""
+    try:
+        scores, placeholder = _scores(OUT), False
+    except FileNotFoundError:
+        scores, placeholder = {m: list(np.linspace(0, 1, C.N_LAYERS)) for m in C.MODELS}, True
+    cs = C.enumerate_cells(scores)
     print(
         f"{len(cs)} cells ({sum(c.arm != 'base' for c in cs)} trained); prereg {prereg.prereg_hash()} "
         f"status={prereg.PREREG_STATUS}"
     )
-    print("sae_top / sae_bottom layer sets above are placeholders until `divergence` is run")
+    if placeholder:
+        print("sae_top / sae_bottom layer sets are placeholders until `divergence` is run")
+    todo = schedule.order_cells(C.pending(cs, OUT / "cells.jsonl"))
+    sec = _sec_per_step(a)
+    n = schedule.GSM8K_TRAIN_N
+    measured = schedule.measured_eval_s(_rows(), sec, n)
+    if a.eval_minutes is not None:
+        evals, how = [a.eval_minutes * 60.0], "--eval-minutes"
+    elif measured is not None:
+        evals, how = [measured], "measured from cells.jsonl"
+    else:
+        evals, how = [900.0, 1800.0, 2700.0], "UNMEASURED: scenarios, replan after the first cell"
+    reserve = a.first_run_reserve_hours * 3600.0 if not _rows() else 0.0
+    budget = a.budget_hours * 3600.0
+    for ev in evals:
+        runs = schedule.pack_runs(
+            todo,
+            lambda c, ev=ev: schedule.cell_seconds(c.arm, c.epochs, sec, n, ev),
+            budget,
+            first_run_reserve_s=reserve,
+        )
+        print(f"\n{len(todo)} pending cells, eval {ev / 60:.0f} min/cell ({how}), "
+              f"{sec:.2f} s/step, {a.budget_hours:g} h budget, margin {schedule.MARGIN}: {len(runs)} runs")
+        for i, r in enumerate(runs, 1):
+            h = sum(schedule.cell_seconds(c.arm, c.epochs, sec, n, ev) for c in r) / 3600.0
+            first = f"{r[0].arm}/{r[0].seed}"
+            last = f"{r[-1].arm}/{r[-1].seed}"
+            print(f"  run {i}: {len(r):2d} cells  {h:4.1f} h  {first} .. {last}")
 
 
 def _prompt_sets() -> dict[str, list[str]]:
@@ -214,25 +256,49 @@ def _scores(div_dir: Path) -> dict[str, list[float]]:
 
 
 def cmd_cell(a: argparse.Namespace) -> None:
+    """Run pending cells in schedule order until --budget-hours would be exceeded.
+
+    A cell cannot be resumed mid-training, so one is started only if its estimated cost (analytic
+    training time + eval time, measured from rows already written) fits the time left."""
     from indbw.selora.pipeline import run_cell
 
+    t_start = time.monotonic()
     prereg.require_registered()
-    todo = C.pending(C.enumerate_cells(_scores(Path(a.div_dir))), OUT / "cells.jsonl")
+    todo = schedule.order_cells(C.pending(C.enumerate_cells(_scores(Path(a.div_dir))), OUT / "cells.jsonl"))
     print(f"{len(todo)} cells pending")
+    sec, n, budget = _sec_per_step(a), schedule.GSM8K_TRAIN_N, a.budget_hours * 3600.0
+    rows = _rows()
     cache: dict[str, Any] = {}
+    done = 0
     for cell in todo[: a.limit]:
+        elapsed = time.monotonic() - t_start
+        eval_s = schedule.measured_eval_s(rows, sec, n)
+        if eval_s is None and a.eval_minutes is not None:
+            eval_s = a.eval_minutes * 60.0
+        if eval_s is not None:
+            need = schedule.cell_seconds(cell.arm, cell.epochs, sec, n, eval_s)
+            if not schedule.may_start(elapsed, need, budget):
+                print(f"stop: {cell.arm}/{cell.seed} needs ~{need / 3600:.2f} h x {schedule.MARGIN}, "
+                      f"{(budget - elapsed) / 3600:.2f} h left of {a.budget_hours:g}")
+                break
         t0 = time.monotonic()
         tok, model = _load_model(cell.model)  # fresh weights per cell: run_cell consumes the model
         if "data" not in cache:
             cache["data"] = _cell_data(tok)
             cache["saes"] = _load_saes(list(range(C.N_LAYERS)))
+            if len(cache["data"].train_ids) != n:
+                raise ValueError(f"train set has {len(cache['data'].train_ids)} items, schedule assumes {n}")
         data, saes = cache["data"], cache["saes"]
-        row = run_cell(cell, model, tok, saes, data, wall_budget_s=6 * 3600.0)
+        row = run_cell(cell, model, tok, saes, data, wall_budget_s=budget - (time.monotonic() - t_start))
         row["wall_clock_s"] = time.monotonic() - t0
         OUT.mkdir(parents=True, exist_ok=True)
         with (OUT / "cells.jsonl").open("a") as f:
             f.write(json.dumps(row, sort_keys=True) + "\n")
             f.flush()
+        rows.append(row)
+        done += 1
+        print(f"{cell.arm}/{cell.seed}: {row['wall_clock_s'] / 3600:.2f} h  "
+              f"({done} this run, {len(todo) - done} pending)")
         del model, row
         _free_gpu()
 
@@ -264,7 +330,16 @@ def cmd_adjudicate(a: argparse.Namespace) -> None:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="stage", required=True)
-    sub.add_parser("plan").set_defaults(fn=cmd_plan)
+    def timing(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--budget-hours", type=float, default=8.0)
+        p.add_argument("--sec-per-step", type=float, default=None, help="default: data/selora/preflight.json")
+        p.add_argument("--eval-minutes", type=float, default=None, help="non-training minutes per cell; default: measured")
+
+    pl = sub.add_parser("plan")
+    timing(pl)
+    pl.add_argument("--first-run-reserve-hours", type=float, default=1.0,
+                    help="held back from run 1 for the divergence stage (unmeasured assumption)")
+    pl.set_defaults(fn=cmd_plan)
     d = sub.add_parser("divergence")
     d.add_argument("--model", required=True, choices=list(C.MODELS))
     d.add_argument("--out", required=True)
@@ -272,6 +347,7 @@ if __name__ == "__main__":
     c = sub.add_parser("cell")
     c.add_argument("--div-dir", required=True)
     c.add_argument("--limit", type=int, default=None)
+    timing(c)
     c.set_defaults(fn=cmd_cell)
     j = sub.add_parser("adjudicate")
     j.add_argument("--div-dir", required=True)

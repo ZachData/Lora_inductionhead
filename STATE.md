@@ -3,7 +3,7 @@
 Working checklist for `PROJECT.md` §13. Read this first in any session touching `src/indbw/selora/`.
 `PROJECT.md` stays the source of truth for claims and decisions; this file tracks *work*.
 
-**Last updated:** 2026-10-13 · **Branch:** `claude/selora-sae-placement` · **Prereg:** DRAFT (unsigned)
+**Last updated:** 2026-10-13 (F5 split into ≤ 8 h runs) · **Branch:** `claude/selora-sae-placement` · **Prereg:** DRAFT (unsigned)
 
 ## Constraints right now
 
@@ -75,7 +75,10 @@ Legend: [x] done (tested offline) · [ ] open · [~] provisioned (written, canno
 - [x] F2 accuracy assumption 0.38 → 0.60 (measured 0.601 [0.575, 0.627], full test, §10); sims unchanged. Open: discordance 0.15–0.25 unmeasured until two arms exist
 - [ ] F3 `divergence` per model → freeze SAE scores
 - [ ] F4 S0/S1 on the late arm only (cheapest kill)
-- [ ] F5 full sweep, then adjudicate once
+- [x] F5a sessions capped at 8 h: `schedule.py` (tested), `plan --budget-hours 8`, `cell --budget-hours 8` never starts a cell that will not finish (2026-10-13)
+- [ ] F5b run 1: `divergence` ×2, then `cell` (base + late-0 first); read the discordance (stop outside 0.15–0.25); `plan` again with the measured eval time to fix the run count
+- [ ] F5c remaining runs, one `cell --budget-hours 8` per day (7–12 depending on eval time); same command resumes
+- [ ] F5d adjudicate once, when `plan` reports 0 pending
 
 ## Simulation results (tests/design, 2026-10-05)
 
