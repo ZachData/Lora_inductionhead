@@ -1,0 +1,12 @@
+{
+ "n": 1319,
+ "correct": 793,
+ "accuracy": 0.601213040181956,
+ "wilson95": [
+  0.5745306695738701,
+  0.6273075550480346
+ ],
+ "first64_accuracy": 0.5625,
+ "model": "google/gemma-2-2b-it",
+ "adapter": null
+}
