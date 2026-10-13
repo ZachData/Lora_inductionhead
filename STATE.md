@@ -71,8 +71,8 @@ Legend: [x] done (tested offline) · [ ] open · [~] provisioned (written, canno
 - Cost: no base-model S3 replication (+31 cells to restore it)
 
 ### F. First real session (after E1–E3)
-- [ ] F1 `preflight_selora.py` green
-- [ ] F2 compare `ASSUMPTIONS` with preflight numbers; if off, stop and revise before sign-off is used
+- [x] F1 `preflight_selora.py` ran end to end on real hubs (2026-10-13); only GSM8K accuracy flagged, resolved in F2
+- [x] F2 accuracy assumption 0.38 → 0.60 (measured 0.601 [0.575, 0.627], full test, §10); sims unchanged. Open: discordance 0.15–0.25 unmeasured until two arms exist
 - [ ] F3 `divergence` per model → freeze SAE scores
 - [ ] F4 S0/S1 on the late arm only (cheapest kill)
 - [ ] F5 full sweep, then adjudicate once

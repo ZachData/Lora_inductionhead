@@ -37,7 +37,7 @@ MMLU_GEN_N: Final[int] = 500  # generation scoring subset; log-prob scoring uses
 #: What the power simulations assume (tests/unit/test_selora_design.py). Compared against the
 #: first real numbers by preflight before any verdict is read (STATE.md practice 3).
 ASSUMPTIONS: dict[str, float] = {
-    "gsm8k_accuracy": 0.38,  # source report, Gemma-2-2B-IT arms (~38%)
+    "gsm8k_accuracy": 0.60,  # measured, untrained -it, full test: 0.601 [0.575, 0.627] (scripts/measure_gsm8k_baseline.py)
     "gsm8k_n_items": 1319,
     "gsm8k_discordance_low": 0.15,  # fraction of items two arms answer differently
     "gsm8k_discordance_high": 0.25,
