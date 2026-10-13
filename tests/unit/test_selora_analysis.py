@@ -96,7 +96,7 @@ def _steps(rng: np.random.Generator, s3a_drop: float, late_best: bool) -> dict: 
     draws = rng.normal(0.3, 0.02, prereg.N_RANDOM_DRAWS)
     named = {0: draws.max() + 0.1 if late_best else draws.mean(), 1: 0.0, 2: 0.0}
     out = {}
-    for model in (IT, BASE):
+    for model in (IT,):
         out[("S3a", model)] = analysis.s3a_step(*_s3a_inputs(rng, s3a_drop))
         out[("S3b", model)] = analysis.rank_step(named, draws, random_seed=0)
     return out
@@ -113,19 +113,23 @@ def test_raw_steps_cannot_be_adjudicated_directly() -> None:
 
 def test_gatekeeping_passes_all_when_all_hold() -> None:
     obs = analysis.gatekeep(_steps(np.random.default_rng(5), 0.0, True))
-    assert [_verdict(cid, obs[(cid, m)]) for cid, m in prereg.GATE_SEQUENCE] == ["pass"] * 4
+    assert [_verdict(cid, obs[(cid, m)]) for cid, m in prereg.GATE_SEQUENCE] == ["pass"] * 2
 
 
 def test_gatekeeping_failure_blocks_everything_after_it() -> None:
-    # S3a holds, S3b (2nd in sequence) fails -> steps 3 and 4 fail even though S3a-base holds.
+    # S3a-it holds, S3b-it fails: S3b-it itself fails, and nothing later could be claimed.
     obs = analysis.gatekeep(_steps(np.random.default_rng(6), 0.0, False))
     verdicts = [_verdict(cid, obs[(cid, m)]) for cid, m in prereg.GATE_SEQUENCE]
-    assert verdicts == ["pass", "fail", "fail", "fail"]
+    assert verdicts == ["pass", "fail"]
+
+
+def test_registered_sequence_is_the_primary_model_only() -> None:
+    assert prereg.GATE_SEQUENCE == (("S3a", IT), ("S3b", IT))
 
 
 def test_gatekeep_requires_exactly_the_registered_sequence() -> None:
     steps = _steps(np.random.default_rng(7), 0.0, True)
-    del steps[("S3b", BASE)]
+    del steps[("S3b", IT)]
     with pytest.raises(ValueError, match="sequence"):
         analysis.gatekeep(steps)
 

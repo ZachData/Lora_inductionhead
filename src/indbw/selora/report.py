@@ -17,9 +17,8 @@ from indbw.schema import ResultsRecord
 from indbw.selora import analysis, cells, prereg
 from indbw.selora.adjudicate import adjudicate
 
-NAMED_ARMS = ("all", "late", "early", "sae_top", "sae_bottom")
-PRIMARY_MODEL = "google/gemma-2-2b-it"  # S5's model (instruct, where placement mattered)
-SAE_MODEL = "google/gemma-2-2b"  # S2/S4: the model the SAEs were trained on / the 9.6% result
+PRIMARY_MODEL = cells.PRIMARY_MODEL  # S3/S5's model (instruct, where placement mattered)
+SAE_MODEL = cells.SAE_MODEL  # S2/S4: the model the SAEs were trained on / the 9.6% result
 
 
 @dataclass(frozen=True)
@@ -59,7 +58,7 @@ def _controls(
         bool(trained) and all("fvu_rand" in r for r in trained),
         "fvu_rand missing from trained rows",
     )
-    seeds = {s for _, a, s in idx if a == "late"}
+    seeds = {s for m, a, s in idx if a == "late" and m == PRIMARY_MODEL}
     mark("seed-to-seed noise floor", len(seeds) >= 2, "fewer than 2 seeds")
     mark("3 seeds", len(seeds) >= 3, "fewer than 3 seeds")
     mark("no-LoRA base", all((m, "base") in arms for m in cells.MODELS), "base rows missing")
@@ -69,7 +68,9 @@ def _controls(
         n_items == {gsm_items_expected},
         f"GSM8K items {sorted(n_items)} != {gsm_items_expected} (full 1319-item set)",
     )
-    n_rand = {m: sum(a.startswith("random_") for mm, a in arms if mm == m) for m in cells.MODELS}
+    n_rand = {
+        m: sum(a.startswith("random_") for mm, a in arms if mm == m) for m in cells.RANDOM_MODELS
+    }
     mark(
         "24 random draws",
         all(v == prereg.N_RANDOM_DRAWS for v in n_rand.values()),
@@ -77,7 +78,7 @@ def _controls(
     )
     mark(
         "same-seed comparison",
-        all((m, "random_00", 0) in idx for m in cells.MODELS),
+        all((m, "random_00", 0) in idx for m in cells.RANDOM_MODELS),
         "no seed-0 draws",
     )
     mark("sae_bottom arm", any(a == "sae_bottom" for _, a in arms), "no sae_bottom arm")
@@ -147,10 +148,10 @@ def build_records(
         record("S0", {"max_abs_resid_diff_below_first_adapted": float(max(below, default=0.0))})
     )
 
-    # S1a / S1b / noise floor: named arms, seed 0, adapted layers, both models.
+    # S1a / S1b / noise floor: every trained named arm, seed 0, adapted layers.
     s1a, s1b, floor = {}, {}, {}
     for m in cells.MODELS:
-        for arm in NAMED_ARMS:
+        for arm in cells.ARM_SEEDS[m]:
             r0 = idx[(m, arm, 0)]
             r1 = idx.get((m, arm, 1))
             for li in r0["cell"]["layers"]:
@@ -181,26 +182,27 @@ def build_records(
         )
     )
 
-    # S3 gatekeeping family.
-    steps: dict[tuple[str, str], dict[str, float]] = {}
-    for m in cells.MODELS:
-        late = np.array([idx[(m, "late", s)]["gsm_correct"] for s in cells.NAMED_SEEDS], float)
-        allc = np.array([idx[(m, "all", s)]["gsm_correct"] for s in cells.NAMED_SEEDS], float)
-        steps[("S3a", m)] = analysis.s3a_step(late, allc)
-        named = {
-            s: _acc(idx[(m, "late", s)]["mmlu_logprob"], idx[(m, "late", s)]["mmlu_logprob_gold"])
-            for s in cells.NAMED_SEEDS
-        }
-        rand = np.array(
-            [
-                _acc(r["mmlu_logprob"], r["mmlu_logprob_gold"])
-                for (mm, a, _), r in idx.items()
-                if mm == m and a.startswith("random_")
-            ]
-        )
-        steps[("S3b", m)] = analysis.rank_step(named, rand, random_seed=0)
-    for (cid, m), obs in analysis.gatekeep(steps).items():
-        out.append(record(cid, {**obs, "model": m}))
+    # S3 gatekeeping family: the primary model only (the registered sequence).
+    m = PRIMARY_MODEL
+    late = np.array([idx[(m, "late", s)]["gsm_correct"] for s in cells.NAMED_SEEDS], float)
+    allc = np.array([idx[(m, "all", s)]["gsm_correct"] for s in cells.NAMED_SEEDS], float)
+    named = {
+        s: _acc(idx[(m, "late", s)]["mmlu_logprob"], idx[(m, "late", s)]["mmlu_logprob_gold"])
+        for s in cells.NAMED_SEEDS
+    }
+    rand = np.array(
+        [
+            _acc(r["mmlu_logprob"], r["mmlu_logprob_gold"])
+            for (mm, a, _), r in idx.items()
+            if mm == m and a.startswith("random_")
+        ]
+    )
+    steps = {
+        ("S3a", m): analysis.s3a_step(late, allc),
+        ("S3b", m): analysis.rank_step(named, rand, random_seed=0),
+    }
+    for (cid, mdl), obs in analysis.gatekeep(steps).items():
+        out.append(record(cid, {**obs, "model": mdl}))
 
     # S4: base model, all-layer arm, seed 0 (the source's 9.6% configuration).
     r = idx[(SAE_MODEL, "all", 0)]
@@ -215,10 +217,7 @@ def build_records(
     )
 
     # S5: SAE-guided top-13 vs random placements, GSM8K, primary model.
-    named = {
-        s: float(np.mean(idx[(PRIMARY_MODEL, "sae_top", s)]["gsm_correct"]))
-        for s in cells.NAMED_SEEDS
-    }
+    named = {0: float(np.mean(idx[(PRIMARY_MODEL, "sae_top", 0)]["gsm_correct"]))}
     rand = np.array(
         [
             float(np.mean(r["gsm_correct"]))

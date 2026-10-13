@@ -15,6 +15,17 @@ MODELS = ("google/gemma-2-2b", "google/gemma-2-2b-it")
 N_LAYERS = 26
 N_ADAPT = 13
 NAMED_SEEDS = (0, 1, 2)
+PRIMARY_MODEL = MODELS[1]  # S3/S5 and the random placements (instruct, where placement mattered)
+SAE_MODEL = MODELS[0]  # the model Gemma Scope was trained on: S2 and S4, S1a replication
+#: Trained named arms per model and the seeds each needs. Lean design: a cell exists only if a
+#: registered claim reads it. S3a pools 3 seeds of all/late; S3b and S5 rank a seed-0 score
+#: against seed-0 random draws, so sae_top/sae_bottom need seed 0 only; S4 reads the SAE
+#: model's all-layer seed-0 cell. `early` and the secondary model's other arms feed no claim.
+ARM_SEEDS: dict[str, dict[str, tuple[int, ...]]] = {
+    PRIMARY_MODEL: {"all": NAMED_SEEDS, "late": NAMED_SEEDS, "sae_top": (0,), "sae_bottom": (0,)},
+    SAE_MODEL: {"all": (0,)},
+}
+RANDOM_MODELS = (PRIMARY_MODEL,)
 RANDOM_SEED_BASE = 1000  # layer-set draws use this; training seed is separate
 INCLUDE_SHUFFLED = False  # optional shuffled-answer control arm (STATE.md C5, needs sign-off)
 
@@ -47,14 +58,19 @@ def enumerate_cells(
         guided = sae_guided_sets(np.asarray(sae_scores[model]), N_ADAPT)
         arms = {**named, **guided}
         out.append(Cell(model, "base", (), 0))
-        for arm, layers in arms.items():
-            for s in NAMED_SEEDS:
-                out.append(Cell(model, arm, layers, s))
-        rand = random_sets(
-            N_LAYERS, N_ADAPT, prereg.N_RANDOM_DRAWS, RANDOM_SEED_BASE, exclude=set(arms.values())
-        )
-        for i, layers in enumerate(rand):
-            out.append(Cell(model, f"random_{i:02d}", layers, 0))
+        for arm, seeds in ARM_SEEDS[model].items():
+            for s in seeds:
+                out.append(Cell(model, arm, arms[arm], s))
+        if model in RANDOM_MODELS:
+            rand = random_sets(
+                N_LAYERS,
+                N_ADAPT,
+                prereg.N_RANDOM_DRAWS,
+                RANDOM_SEED_BASE,
+                exclude=set(arms.values()),
+            )
+            for i, layers in enumerate(rand):
+                out.append(Cell(model, f"random_{i:02d}", layers, 0))
         if include_shuffled:
             for s in NAMED_SEEDS:
                 out.append(Cell(model, "shuffled_answers", named["all"], s))

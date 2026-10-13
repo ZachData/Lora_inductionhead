@@ -148,13 +148,11 @@ CLAIMS: Final[tuple[Claim, ...]] = (
     ),
 )
 
-#: Fixed-sequence order for the gatekeep family: primary (instruct) model first, task gain
-#: before retention. Testing stops at the first non-rejection.
+#: Fixed-sequence order for the gatekeep family: the primary (instruct) model only, task gain
+#: before retention (the base-model replication was dropped in the lean design, STATE.md G). Testing stops at the first non-rejection.
 GATE_SEQUENCE: Final[tuple[tuple[str, str], ...]] = (
     ("S3a", "google/gemma-2-2b-it"),
     ("S3b", "google/gemma-2-2b-it"),
-    ("S3a", "google/gemma-2-2b"),
-    ("S3b", "google/gemma-2-2b"),
 )
 
 

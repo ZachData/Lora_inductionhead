@@ -3,7 +3,7 @@
 Working checklist for `PROJECT.md` §13. Read this first in any session touching `src/indbw/selora/`.
 `PROJECT.md` stays the source of truth for claims and decisions; this file tracks *work*.
 
-**Last updated:** 2026-10-05 · **Branch:** `claude/selora-sae-placement` · **Prereg:** DRAFT (unsigned)
+**Last updated:** 2026-10-13 · **Branch:** `claude/selora-sae-placement` · **Prereg:** DRAFT (unsigned)
 
 ## Constraints right now
 
@@ -21,7 +21,7 @@ Working checklist for `PROJECT.md` §13. Read this first in any session touching
 6. **Loaders thin and in `scripts/`; measurement in `src/`.**
 7. **Reproducible from the record**: seed before every random draw; same cell → identical row.
 8. **Preflight before any sweep** (`scripts/preflight_selora.py`): downloads, shapes, base-FVU sanity, timing probe, first output populated.
-9. **Stage compute**: S0/S1/S2 (forward passes, few adapters) before the 80-cell sweep.
+9. **Stage compute**: S0/S1/S2 (forward passes, few adapters) before the 33-cell sweep.
 10. **No verdicts on partial data**: adjudication refuses until every planned cell has a row.
 
 ## Checklist
@@ -60,7 +60,15 @@ Legend: [x] done (tested offline) · [ ] open · [~] provisioned (written, canno
 - [ ] E1 Sign off §13.4 claims, thresholds, multiplicity rules, assumptions (→ §10, flip `PREREG_STATUS`)
 - [ ] E2 Allow `huggingface.co` (and optionally `neuronpedia.org`); HF token with Gemma licence
 - [ ] E3 GPU sign-off in §10 (first use: preflight + 20-step timing probe)
+- [ ] E5 Approve the lean design in G (or ask for the base-model S3 replication back)
 - [ ] E4 Decide whether C5 (shuffled-answer arm) is in the registered design
+
+### G. Lean design (2026-10-13, proposed; E5 decides)
+- [x] G1 CI: `transformer_lens<4` (4.0.0 removed `loading_from_pretrained`)
+- [x] G2 `cells.ARM_SEEDS`: 35 cells (33 trained) instead of 80; only cells a claim reads
+- [x] G3 `GATE_SEQUENCE` = S3a-it → S3b-it; `report.build_records` S3 on the primary model only; S5 uses seed 0
+- [x] G4 2-step fixed-sequence FWER test; S3a sims unchanged
+- Cost: no base-model S3 replication (+31 cells to restore it)
 
 ### F. First real session (after E1–E3)
 - [ ] F1 `preflight_selora.py` green

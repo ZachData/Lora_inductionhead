@@ -65,7 +65,7 @@ def cmd_plan(_: argparse.Namespace) -> None:
     fake = {m: list(np.linspace(0, 1, C.N_LAYERS)) for m in C.MODELS}  # placeholder scores
     cs = C.enumerate_cells(fake)
     print(
-        f"{len(cs)} cells ({len(cs) // len(C.MODELS)} per model); prereg {prereg.prereg_hash()} "
+        f"{len(cs)} cells ({sum(c.arm != 'base' for c in cs)} trained); prereg {prereg.prereg_hash()} "
         f"status={prereg.PREREG_STATUS}"
     )
     print("sae_top / sae_bottom layer sets above are placeholders until `divergence` is run")

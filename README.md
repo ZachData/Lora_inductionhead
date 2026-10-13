@@ -16,7 +16,7 @@ What the repo *has* produced:
 
 ## Extension S: selective LoRA × SAE validity (2026-10-05)
 
-A second, independent experiment lives in `src/indbw/selora/` and `PROJECT.md` §13: where on Gemma-2-2B / 2B-it a LoRA adapter should sit (all / late / early / random / SAE-guided layers), and whether Gemma Scope SAEs still reconstruct the fine-tuned residual stream. Pre-registered claims S0–S5 with nulls, controls and machine-checked verdicts are in `selora/prereg.py` (**draft, unsigned**). The machinery is built and tested on a random Gemma2; **no real checkpoint has been run** (sandbox cannot reach huggingface.co; GPU needs a §10 sign-off). `python scripts/run_selora.py plan` enumerates the 80 cells.
+A second, independent experiment lives in `src/indbw/selora/` and `PROJECT.md` §13: where on Gemma-2-2B / 2B-it a LoRA adapter should sit (all / late / early / random / SAE-guided layers), and whether Gemma Scope SAEs still reconstruct the fine-tuned residual stream. Pre-registered claims S0–S5 with nulls, controls and machine-checked verdicts are in `selora/prereg.py` (**draft, unsigned**). The machinery is built and tested on a random Gemma2; **no real checkpoint has been run** (sandbox cannot reach huggingface.co; GPU needs a §10 sign-off). `python scripts/run_selora.py plan` enumerates the 35 cells (lean design, pending sign-off).
 
 ## Relationship to Mets
 

@@ -16,11 +16,30 @@ SCORES = {m: list(np.linspace(0, 1, 26)) for m in cells.MODELS}
 
 def test_cell_counts_and_unique_ids() -> None:
     cs = cells.enumerate_cells(SCORES)
-    per_model = 1 + 5 * len(cells.NAMED_SEEDS) + prereg.N_RANDOM_DRAWS
-    assert len(cs) == 2 * per_model == 80
+    primary, secondary = cells.PRIMARY_MODEL, cells.SAE_MODEL
+    by_model = {m: [c for c in cs if c.model == m] for m in cells.MODELS}
+    # Primary: base + all/late x 3 seeds + sae_top/sae_bottom x seed 0 + 24 random draws.
+    assert len(by_model[primary]) == 1 + 2 * 3 + 2 + prereg.N_RANDOM_DRAWS == 33
+    # Secondary (the SAE model): base + all x seed 0, which S1a and S4 read.
+    assert len(by_model[secondary]) == 2
+    assert len(cs) == 35 and sum(c.arm != "base" for c in cs) == 33
     assert len({c.run_id for c in cs}) == len(cs)
-    late = [c for c in cs if c.arm == "late" and c.model == cells.MODELS[0]]
+    late = [c for c in cs if c.arm == "late" and c.model == primary]
     assert [c.layers for c in late] == [tuple(range(13, 26))] * 3
+
+
+def test_every_planned_cell_is_read_by_some_claim() -> None:
+    # The lean design drops `early` and the secondary-model arms no claim consumes.
+    cs = cells.enumerate_cells(SCORES)
+    assert not any(c.arm == "early" for c in cs)
+    assert not any(c.arm.startswith("random_") for c in cs if c.model == cells.SAE_MODEL)
+    seeds = {
+        (c.model, c.arm): {x.seed for x in cs if (x.model, x.arm) == (c.model, c.arm)} for c in cs
+    }
+    assert seeds[(cells.PRIMARY_MODEL, "all")] == seeds[(cells.PRIMARY_MODEL, "late")] == {0, 1, 2}
+    assert (
+        seeds[(cells.PRIMARY_MODEL, "sae_top")] == seeds[(cells.PRIMARY_MODEL, "sae_bottom")] == {0}
+    )
 
 
 def test_random_arms_never_collide_with_named_sets() -> None:
@@ -124,5 +143,7 @@ def test_shuffled_arm_is_optional_and_off_by_default() -> None:
     assert not any(c.arm == "shuffled_answers" for c in base)
     withs = cells.enumerate_cells(SCORES, include_shuffled=True)
     shuffled = [c for c in withs if c.arm == "shuffled_answers"]
-    assert len(withs) == len(base) + len(shuffled) and len(shuffled) == 2 * len(cells.NAMED_SEEDS)
+    assert len(withs) == len(base) + len(shuffled) and len(shuffled) == len(cells.MODELS) * len(
+        cells.NAMED_SEEDS
+    )
     assert all(c.layers == tuple(range(cells.N_LAYERS)) for c in shuffled)

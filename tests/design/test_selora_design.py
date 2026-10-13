@@ -54,6 +54,14 @@ def test_fixed_sequence_controls_fwer_under_global_null() -> None:
     assert np.mean((adj <= prereg.ALPHA).any(axis=1)) <= prereg.ALPHA + 0.015
 
 
+def test_fixed_sequence_controls_fwer_for_the_registered_two_step_sequence() -> None:
+    n = len(prereg.GATE_SEQUENCE)
+    assert n == 2
+    rng = np.random.default_rng(1)
+    adj = np.array([stats.fixed_sequence_adjust(row) for row in rng.random((4000, n))])
+    assert np.mean((adj <= prereg.ALPHA).any(axis=1)) <= prereg.ALPHA + 0.015
+
+
 def test_fixed_sequence_stops_at_first_failure() -> None:
     adj = stats.fixed_sequence_adjust(np.array([0.01, 0.20, 0.001, 0.001]))
     np.testing.assert_allclose(adj, [0.01, 0.20, 0.20, 0.20])
