@@ -12,7 +12,7 @@ dependencies = [
     # loading branches; the pythia branch itself is still unguarded even at
     # 3.7.1 -- see the get_token_to_send workaround in models.py. Floor, not
     # pin: newer releases are fine, an older resolution is not.
-    "transformer_lens>=3.7.1",
+    "transformer_lens>=3.7.1,<4",
     # transformer_lens's neox weight conversion hardcodes GPTNeoXForCausalLM's
     # head as `embed_out`; transformers renamed it to `lm_head` after 5.9.0
     # (transformer_lens's own declared floor), breaking Pythia loading on an
@@ -20,6 +20,8 @@ dependencies = [
     # `embed_out` — see PROJECT.md decisions log.
     "transformers==5.9.0",
     "numpy",
+    # selective-LoRA extension (PROJECT.md section 13): HF Gemma2 + PEFT adapters.
+    "peft",
 ]
 
 [project.optional-dependencies]
@@ -58,6 +60,8 @@ line-length = 100
 "tests/unit/test_diagnose_g3_reachability.py" = ["E402"]
 "tests/unit/test_g0_sweep.py" = ["E402"]
 "tests/unit/test_run_g3.py" = ["E402"]
+"scripts/check_selora_metric_hash.py" = ["E402"]
+"scripts/preflight_selora.py" = ["E402"]
 "tests/unit/test_run_sweep.py" = ["E402"]
 # A one-line lambda naming the comparison under test reads better than a
 # def here; the rule is about shadowing/readability in production code.

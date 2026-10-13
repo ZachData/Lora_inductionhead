@@ -21,3 +21,9 @@ repos:
         language: system
         pass_filenames: false
         files: ^(src/indbw/(algebra|probes|schema)\.py|metric_hash\.json)$
+      - id: selora-metric-hash
+        name: selora metric-hash check (SELORA_METRIC_VERSION vs. selora/{sae,probes,evals,stats}.py)
+        entry: python scripts/check_selora_metric_hash.py
+        language: system
+        pass_filenames: false
+        files: ^(src/indbw/selora/(sae|probes|evals|stats|prereg)\.py|selora_metric_hash\.json)$
