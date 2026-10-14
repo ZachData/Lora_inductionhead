@@ -93,5 +93,5 @@ Legend: [x] done (tested offline) · [ ] open · [~] provisioned (written, canno
 ## Open offline work (no network needed)
 
 - [x] `check_selora_metric_hash.py --update` refuses without a `SELORA_METRIC_VERSION` bump (2026-10-13)
-- [ ] If discordance ≥ 0.25 is plausible, draft a 5-seed variant of S3a with its simulation, for E1
-- [ ] Measure nothing, decide: S2 on base only vs both models; S4/S5 configurations (REVIEW.md 2026-10-05)
+- [x] 5-seed S3a variant drafted and simulated (power 0.89 at disc 0.25, 0.83 at 0.30; recommend keeping 3 seeds), for E1 (§10, 2026-10-13)
+- [x] S2 base only; S4/S5 configurations kept as encoded (§10, 2026-10-13; needs E1 approval)

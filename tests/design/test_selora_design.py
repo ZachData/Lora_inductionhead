@@ -106,6 +106,38 @@ def test_s3a_power_when_arms_are_equal(disc: float) -> None:
     assert np.mean(ok) >= 0.8
 
 
+# ---- S3a 5-seed variant: a DRAFT alternative for E1, not wired into prereg --------------------
+# Held in reserve in case the first measured discordance is >= 0.25, where 3 seeds sit on the
+# 0.8 power bar. Adopting it is a sign-off decision (more seeds per arm), not an agent one.
+
+DISC_RESERVE = 0.25
+DISC_STRESS = 0.30  # beyond the registered range: shows what 5 seeds buys if 0.25 is exceeded
+
+
+def test_s3a_five_seed_type_i_at_margin_boundary() -> None:
+    # 150 reps, sd of the rate ~0.018; bound alpha + 3 sd, as for 3 seeds
+    rng = np.random.default_rng(3)
+    rej = [
+        analysis.s3a_from_diffs(
+            _paired_diffs(rng, -prereg.ACC_MARGIN, DISC_RESERVE, n_seeds=5), seed=i
+        )["p_raw"]
+        <= prereg.ALPHA
+        for i in range(150)
+    ]
+    assert np.mean(rej) <= prereg.ALPHA + 0.055
+
+
+@pytest.mark.parametrize("disc", [DISC_RESERVE, DISC_STRESS])
+def test_s3a_five_seed_power_when_arms_are_equal(disc: float) -> None:
+    rng = np.random.default_rng(4)
+    ok = [
+        analysis.s3a_from_diffs(_paired_diffs(rng, 0.0, disc, n_seeds=5), seed=i)["p_raw"]
+        <= prereg.ALPHA
+        for i in range(100)
+    ]
+    assert np.mean(ok) >= 0.8
+
+
 # ---- S1a bootstrap-t (STATE B4) -----------------------------------------------------------
 
 
