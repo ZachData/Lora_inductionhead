@@ -70,10 +70,18 @@ def check() -> list[str]:
 
 def update() -> None:
     if LOCK.exists():
-        lock_py = json.loads(LOCK.read_text()).get("python_version", "unknown")
+        lock = json.loads(LOCK.read_text())
+        lock_py = lock.get("python_version", "unknown")
         if lock_py != "unknown" and lock_py != PYTHON:
             raise ValueError(
                 f"refusing to regenerate: the lock was written under Python {lock_py}, this is "
                 f"{PYTHON}. Run --update under {lock_py} so the baseline is not skewed."
+            )
+        cur = compute()
+        changed = cur["aggregate"] != lock["aggregate"]
+        if changed and cur["metric_version"] == lock["metric_version"]:
+            raise ValueError(
+                "refusing to regenerate: metric definitions changed but SELORA_METRIC_VERSION is "
+                f"still {cur['metric_version']}. Bump it in prereg.py first."
             )
     LOCK.write_text(json.dumps(compute(), indent=2, sort_keys=True) + "\n")

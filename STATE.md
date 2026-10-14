@@ -3,7 +3,7 @@
 Working checklist for `PROJECT.md` §13. Read this first in any session touching `src/indbw/selora/`.
 `PROJECT.md` stays the source of truth for claims and decisions; this file tracks *work*.
 
-**Last updated:** 2026-10-13 (F5 split into ≤ 8 h runs) · **Branch:** `claude/selora-sae-placement` · **Prereg:** DRAFT (unsigned)
+**Last updated:** 2026-10-13 (--update bump guard) · **Branch:** `claude/selora-sae-placement` · **Prereg:** DRAFT (unsigned)
 
 ## Constraints right now
 
@@ -92,6 +92,6 @@ Legend: [x] done (tested offline) · [ ] open · [~] provisioned (written, canno
 
 ## Open offline work (no network needed)
 
-- [ ] `check_selora_metric_hash.py --update` should refuse without a `SELORA_METRIC_VERSION` bump
+- [x] `check_selora_metric_hash.py --update` refuses without a `SELORA_METRIC_VERSION` bump (2026-10-13)
 - [ ] If discordance ≥ 0.25 is plausible, draft a 5-seed variant of S3a with its simulation, for E1
 - [ ] Measure nothing, decide: S2 on base only vs both models; S4/S5 configurations (REVIEW.md 2026-10-05)

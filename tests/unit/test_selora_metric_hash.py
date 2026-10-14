@@ -64,6 +64,32 @@ def test_update_refuses_to_rebaseline_from_another_interpreter(tmp_path, monkeyp
 def test_update_may_stamp_a_lock_with_no_interpreter_record(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     import json
 
-    p = _lock_with(tmp_path, monkeypatch, aggregate="0" * 64, python_version="unknown")
+    p = _lock_with(
+        tmp_path, monkeypatch, aggregate="0" * 64, python_version="unknown", metric_version="older"
+    )
     metric_hash.update()
     assert json.loads(p.read_text())["aggregate"] == metric_hash.compute()["aggregate"]
+
+
+def test_update_refuses_changed_definitions_under_an_unchanged_version(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import pytest
+
+    p = _lock_with(tmp_path, monkeypatch, aggregate="0" * 64)  # same version, different surface
+    before = p.read_text()
+    with pytest.raises(ValueError, match="SELORA_METRIC_VERSION"):
+        metric_hash.update()
+    assert p.read_text() == before
+
+
+def test_update_accepts_changed_definitions_after_a_version_bump(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import json
+
+    p = _lock_with(tmp_path, monkeypatch, aggregate="0" * 64, metric_version="0.0.0-older")
+    metric_hash.update()
+    assert json.loads(p.read_text())["aggregate"] == metric_hash.compute()["aggregate"]
+
+
+def test_update_on_a_matching_lock_is_a_noop_rewrite(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    p = _lock_with(tmp_path, monkeypatch)
+    metric_hash.update()
+    assert metric_hash.check() == [] and p.exists()
